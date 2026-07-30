@@ -1,0 +1,37 @@
+{
+  "name": "pvl-dual-rail",
+  "version": "0.1.0",
+  "description": "Dual-rail LLM router: FinOps (OpenRouter) + Enterprise (Vertex). Same Tri-Tier brain; internalContext never leaves on FinOps.",
+  "type": "module",
+  "license": "MIT",
+  "private": false,
+  "exports": {
+    ".": "./src/index.mjs",
+    "./policy": "./src/policy.mjs",
+    "./router": "./src/router.mjs"
+  },
+  "scripts": {
+    "smoke": "node scripts/smoke.mjs",
+    "test": "node scripts/smoke.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "llm",
+    "openrouter",
+    "vertex-ai",
+    "finops",
+    "enterprise",
+    "rag",
+    "routing"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sharemo168-hub/pvl-dual-rail.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sharemo168-hub/pvl-dual-rail/issues"
+  },
+  "homepage": "https://github.com/sharemo168-hub/pvl-dual-rail#readme"
+}
