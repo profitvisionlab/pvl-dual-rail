@@ -5,11 +5,11 @@ import { envList, envInt } from '../env.mjs'
 
 const PROVIDER_ORDER_REALTIME = envList(
   'OPENROUTER_PROVIDER_ORDER',
-  'Groq,Together,DeepInfra,Fireworks,Amazon Bedrock',
+  '',
 )
 const PROVIDER_ORDER_BATCH = envList(
   'OPENROUTER_PROVIDER_ORDER_BATCH',
-  'DeepInfra,Together,Fireworks,Groq',
+  '',
 )
 // Optional only — default bf16/fp16 filters out Claude/GPT (404).
 const PROVIDER_QUANTIZATIONS = process.env.OPENROUTER_QUANTIZATIONS
@@ -28,10 +28,10 @@ export const FINOPS_TIERS = {
       [
         ...envList(
           'OPENROUTER_FREE_MODELS',
-          'meta-llama/llama-3.3-70b-instruct:free,openai/gpt-oss-120b:free,nousresearch/hermes-3-llama-3.1-405b:free,google/gemma-4-31b-it:free',
+          '',
         ),
         'google/gemini-2.5-flash',
-        'meta-llama/llama-3.1-8b-instruct',
+        '',
       ].join(','),
     ),
   },
