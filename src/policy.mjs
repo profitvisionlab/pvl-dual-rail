@@ -5,7 +5,11 @@
 //   enterprise — boundary-bound generation (Vertex / Gemini Enterprise). Internal OK.
 //
 // Hard rule (enforced in code, not just docs):
-//   internalContext === true  ⇒  never call finops, even if caller asks for it.
+//   internalContext === true      ⇒  never call finops, even if caller asks for it.
+//   sensitivity === 'internal'    ⇒  same gate. Explicit rail:'finops' + internal
+//                                    sensitivity throws instead of silently passing
+//                                    (hole fixed 2026-08-20: explicit-rail branch used
+//                                    to run before the sensitivity check).
 
 export const RAILS = Object.freeze(['finops', 'enterprise'])
 
@@ -21,15 +25,20 @@ export function resolveRail({
   sensitivity = 'public',
   internalContext = false,
 } = {}) {
-  // Absolute gate: internal chunks never leave on the FinOps rail.
+  // Absolute gate: internal data never leaves on the FinOps rail —
+  // whether flagged via internalContext (payload contains internal chunks)
+  // or declared via sensitivity ('internal'). Checked BEFORE the explicit-rail
+  // branch so callers cannot opt out by naming the rail.
+  if (rail === 'finops' && (internalContext || sensitivity === 'internal')) {
+    const err = new Error(
+      `dual-rail policy: ${
+        internalContext ? 'internalContext=true' : "sensitivity='internal'"
+      } forbids rail=finops (internal data must not leave the enterprise boundary)`,
+    )
+    err.code = 'DUAL_RAIL_INTERNAL_ON_FINOPS'
+    throw err
+  }
   if (internalContext) {
-    if (rail === 'finops') {
-      const err = new Error(
-        'dual-rail policy: internalContext=true forbids rail=finops (internal chunks must not leave the enterprise boundary)',
-      )
-      err.code = 'DUAL_RAIL_INTERNAL_ON_FINOPS'
-      throw err
-    }
     return { rail: 'enterprise', reason: 'internal-context', forced: true }
   }
 

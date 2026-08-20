@@ -9,6 +9,7 @@
 //   2) internalContext alone → enterprise mock succeeds
 //   3) sensitivity=published → finops selected by policy
 //   4) explicit rail=enterprise → enterprise mock
+//   5) sensitivity=internal + rail=finops → rejected (explicit rail is not an opt-out)
 
 process.env.ENTERPRISE_ADAPTER = process.env.ENTERPRISE_ADAPTER || 'mock'
 
@@ -44,6 +45,21 @@ const d3 = resolveRail({ sensitivity: 'published' })
 ok('published → finops', d3.rail === 'finops', d3.reason)
 ok('finopsAllowed(published)', finopsAllowed({ sensitivity: 'published' }))
 ok('!finopsAllowed(internal ctx)', !finopsAllowed({ internalContext: true }))
+
+let blockedSens = false
+let codeSens = ''
+try {
+  resolveRail({ rail: 'finops', sensitivity: 'internal' })
+} catch (e) {
+  blockedSens = true
+  codeSens = e.code || ''
+}
+ok(
+  "sensitivity='internal' forbids explicit finops",
+  blockedSens && codeSens === 'DUAL_RAIL_INTERNAL_ON_FINOPS',
+  codeSens,
+)
+ok('!finopsAllowed(sensitivity internal)', !finopsAllowed({ sensitivity: 'internal' }))
 
 try {
   const r = await chatComplete({

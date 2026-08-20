@@ -11,12 +11,13 @@ Brand: **PVL.AI**. GitHub (for now): [`sharemo168-hub/pvl-dual-rail`](https://gi
 
 ## Hard rule (verifiable)
 
-`internalContext: true` **never** calls FinOps.  
-Requesting `rail: 'finops'` with internal chunks throws `DUAL_RAIL_INTERNAL_ON_FINOPS`.
+`internalContext: true` **never** calls FinOps — and neither does
+`sensitivity: 'internal'`. Requesting `rail: 'finops'` with either throws
+`DUAL_RAIL_INTERNAL_ON_FINOPS`; naming the rail explicitly is not an opt-out.
 
 ```bash
 npm test
-# → 8/8 passed (no GCP required; enterprise uses mock)
+# → 10/10 passed (no GCP required; enterprise uses mock)
 ```
 
 ## Install / use
