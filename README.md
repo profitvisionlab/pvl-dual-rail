@@ -4,8 +4,12 @@ Same Tri-Tier scheduling brain, **two rails**, with a hard policy gate in code (
 
 | Rail | Adapter | Allowed data |
 |------|---------|--------------|
-| **finops** | [OpenRouter](https://openrouter.ai) | `public` / `published` only |
+| **finops** | [Together AI](https://together.ai) (primary) with [OpenRouter](https://openrouter.ai) fallback | `public` / `published` only |
 | **enterprise** | Vertex AI Gemini (`ENTERPRISE_ADAPTER=mock` for offline proof) | `internal` / `internalContext: true` |
+
+> Together became the primary FinOps provider on 2026-08-13; OpenRouter is the
+> fallback. Rationale in [`src/adapters/together.mjs`](./src/adapters/together.mjs):
+> an aggregation layer cannot control the jurisdiction where data lands.
 
 Brand: **PVL.AI**. GitHub (for now): [`sharemo168-hub/pvl-dual-rail`](https://github.com/sharemo168-hub/pvl-dual-rail). May move to org `pvl-ai` later.
 
@@ -22,11 +26,16 @@ npm test
 
 ## Install / use
 
-Node ≥ 20. Zero runtime dependencies.
+Node ≥ 20. Zero runtime dependencies. Not on the npm registry yet — install
+straight from GitHub:
+
+```bash
+npm install github:sharemo168-hub/pvl-dual-rail
+```
 
 ```js
 import { chatComplete } from 'pvl-dual-rail'
-// or: import { chatComplete } from './src/index.mjs'
+// or vendor it: import { chatComplete } from './src/index.mjs'
 
 // Cost path — published / public only
 await chatComplete({
@@ -49,12 +58,14 @@ await chatComplete({
 ```
 src/
   index.mjs           # chatComplete
-  policy.mjs          # resolveRail / finopsAllowed
+  policy.mjs          # resolveRail / finopsAllowed — the hard gate
   router.mjs          # Tri-Tier + circuit breaker
+  env.mjs             # env helpers
   adapters/
-    openrouter.mjs    # finops
+    together.mjs      # finops primary
+    openrouter.mjs    # finops fallback
     enterprise.mjs    # Vertex (+ mock)
-scripts/smoke.mjs     # offline-verifiable claims
+scripts/smoke.mjs     # offline-verifiable claims (npm test)
 ```
 
 ## Env

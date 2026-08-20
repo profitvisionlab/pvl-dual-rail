@@ -1,7 +1,7 @@
 {
   "name": "pvl-dual-rail",
-  "version": "0.1.0",
-  "description": "Dual-rail LLM router: FinOps (OpenRouter) + Enterprise (Vertex). Same Tri-Tier brain; internalContext never leaves on FinOps.",
+  "version": "0.2.0",
+  "description": "Dual-rail LLM router: FinOps (Together primary, OpenRouter fallback) × Enterprise (Vertex Gemini). Same Tri-Tier brain; internal data never leaves on FinOps.",
   "type": "module",
   "license": "MIT",
   "private": false,
@@ -19,6 +19,7 @@
   },
   "keywords": [
     "llm",
+    "together-ai",
     "openrouter",
     "vertex-ai",
     "finops",

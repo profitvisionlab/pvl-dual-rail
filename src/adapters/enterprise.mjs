@@ -47,8 +47,11 @@ export function isEnterpriseMock() {
 }
 
 export function isEnterpriseConfigured() {
+  // Must mirror resolveAccessToken(): only VERTEX_ACCESS_TOKEN (or mock) actually
+  // works. Accepting GOOGLE_APPLICATION_CREDENTIALS here used to report
+  // "configured" for an ADC setup that then failed at call time.
   if (isEnterpriseMock()) return true
-  return Boolean(process.env.VERTEX_PROJECT_ID && (process.env.VERTEX_ACCESS_TOKEN || process.env.GOOGLE_APPLICATION_CREDENTIALS))
+  return Boolean(process.env.VERTEX_PROJECT_ID && process.env.VERTEX_ACCESS_TOKEN)
 }
 
 function systemToText(system) {
