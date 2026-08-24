@@ -128,7 +128,7 @@ export async function callOpenRouter({
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${key}`,
-          'HTTP-Referer': 'https://github.com/sharemo168-hub/pvl-dual-rail',
+          'HTTP-Referer': 'https://github.com/profitvisionlab/pvl-dual-rail',
           'X-Title': 'PVL.AI Dual-Rail',
         },
         body: JSON.stringify(body),

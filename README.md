@@ -11,7 +11,7 @@ Same Tri-Tier scheduling brain, **two rails**, with a hard policy gate in code (
 > fallback. Rationale in [`src/adapters/together.mjs`](./src/adapters/together.mjs):
 > an aggregation layer cannot control the jurisdiction where data lands.
 
-Brand: **PVL.AI**. GitHub (for now): [`sharemo168-hub/pvl-dual-rail`](https://github.com/sharemo168-hub/pvl-dual-rail). May move to org `pvl-ai` later.
+Brand: **PVL.AI**. GitHub: [`profitvisionlab/pvl-dual-rail`](https://github.com/profitvisionlab/pvl-dual-rail).
 
 ## Hard rule (verifiable)
 
@@ -30,7 +30,7 @@ Node ≥ 20. Zero runtime dependencies. Not on the npm registry yet — install
 straight from GitHub:
 
 ```bash
-npm install github:sharemo168-hub/pvl-dual-rail
+npm install github:profitvisionlab/pvl-dual-rail
 ```
 
 ```js

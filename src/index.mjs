@@ -6,7 +6,7 @@
 // FinOps 軌自 2026-08-13 起以 Together 為主要供應商，OpenRouter 降為備援。
 // 理由見 adapters/together.mjs 檔頭：聚合層無法控制資料落地的司法管轄。
 //
-// PVL.AI semi-open unit: https://github.com/sharemo168-hub/pvl-dual-rail
+// PVL.AI semi-open unit: https://github.com/profitvisionlab/pvl-dual-rail
 
 import { resolveRail } from './policy.mjs'
 import {

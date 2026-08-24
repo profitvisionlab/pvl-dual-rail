@@ -29,10 +29,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/sharemo168-hub/pvl-dual-rail.git"
+    "url": "https://github.com/profitvisionlab/pvl-dual-rail.git"
   },
   "bugs": {
-    "url": "https://github.com/sharemo168-hub/pvl-dual-rail/issues"
+    "url": "https://github.com/profitvisionlab/pvl-dual-rail/issues"
   },
-  "homepage": "https://github.com/sharemo168-hub/pvl-dual-rail#readme"
+  "homepage": "https://github.com/profitvisionlab/pvl-dual-rail#readme"
 }
