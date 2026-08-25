@@ -92,6 +92,24 @@ try {
   ok('explicit enterprise rail', false, e.message)
 }
 
+if (process.env.NVIDIA_NIM_API_KEY) {
+  try {
+    const r = await chatComplete({
+      system: 'Reply with exactly: pong',
+      messages: [{ role: 'user', content: 'ping' }],
+      sensitivity: 'public',
+      maxTokens: 32,
+      tier: 1,
+      escalate: true,
+    })
+    ok('finops live via NIM (optional)', r.rail === 'finops' && r.text.length > 0, `${r.provider} · ${r.model}`)
+  } catch (e) {
+    ok('finops live via NIM (optional)', false, e.message)
+  }
+} else {
+  ok('finops live via NIM skipped (no NVIDIA_NIM_API_KEY)', true, 'policy-only run')
+}
+
 if (process.env.OPENROUTER_API_KEY) {
   try {
     const r = await chatComplete({

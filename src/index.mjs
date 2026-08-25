@@ -1,10 +1,11 @@
 // Dual-rail chatComplete — shared Tri-Tier brain + policy gate + adapters.
 //
-//   rail=finops     → Together.AI（主）／OpenRouter（備援）。Public / published only.
+//   rail=finops     → NVIDIA NIM（主，至 2027-02-25）／Together／OpenRouter（備援鏈）。Public / published only.
 //   rail=enterprise → Vertex Gemini (boundary). Required when internalContext.
 //
-// FinOps 軌自 2026-08-13 起以 Together 為主要供應商，OpenRouter 降為備援。
-// 理由見 adapters/together.mjs 檔頭：聚合層無法控制資料落地的司法管轄。
+// FinOps 軌自 2026-08-25 起以 NVIDIA NIM 為主力供應商（六個月免費／高額度期間，
+// 理由見 adapters/nim.mjs 檔頭）；Together 退居第二備援，OpenRouter 第三備援。
+// 2027-02-25 免費期滿後要重新評估這個順序。
 //
 // PVL.AI semi-open unit: https://github.com/profitvisionlab/pvl-dual-rail
 
@@ -16,6 +17,12 @@ import {
   resetCircuitBreakers,
   HEAVY_CONTEXT_TOKENS,
 } from './router.mjs'
+import {
+  callNim,
+  listNimModels,
+  nimTierName,
+  isNimConfigured,
+} from './adapters/nim.mjs'
 import {
   callTogether,
   listTogetherModels,
@@ -42,6 +49,7 @@ export {
   getCircuitBreakerStatus,
   resetCircuitBreakers,
   HEAVY_CONTEXT_TOKENS,
+  isNimConfigured,
   isTogetherConfigured,
   isFinopsConfigured,
   isEnterpriseConfigured,
@@ -95,16 +103,38 @@ export async function chatComplete({
   const startTier = resolveTier({ tier: tierOpt, task, contextTokens })
 
   if (decision.rail === 'finops') {
-    // ── FinOps 軌：Together 主、OpenRouter 備援 ──────────────────────────
-    // 聚合層會自行挑選下游供應商，資料實際落在哪個機房、受哪一國法域管轄
-    // 都不可控。直連單一供應商只有一個對手方，資料路徑是已知的。
-    // 保留 OpenRouter 為備援而非移除 —— 單一供應商全掛時仍要有出路，
-    // 但那是降級，所以回傳值會標 fellBack，讓呼叫端與日誌看得出來。
-    if (!isTogetherConfigured() && !isFinopsConfigured()) {
+    // ── FinOps 軌：NIM 主 → Together → OpenRouter 三層備援 ───────────────
+    // NIM 是目前的主力（六個月免費／高額度期間，至 2027-02-25，理由見
+    // adapters/nim.mjs 檔頭）。Together／OpenRouter 保留為備援 —— 額度
+    // 耗盡、限流、或斷路器跳開時才接手，那是降級，所以回傳值會標
+    // fellBack，讓呼叫端與日誌看得出來「為什麼換了供應商」，不是只看到
+    // 換了供應商這個結果。
+    if (!isNimConfigured() && !isTogetherConfigured() && !isFinopsConfigured()) {
       throw new Error(
-        'FinOps rail selected but neither TOGETHER_API_KEY nor OPENROUTER_API_KEY is set',
+        'FinOps rail selected but none of NVIDIA_NIM_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY is set',
       )
     }
+
+    const runOnNim = () =>
+      runTier({
+        listModels: listNimModels,
+        callTier: ({ models, ...rest }) =>
+          callNim({
+            models,
+            system: rest.system,
+            messages: rest.messages,
+            maxTokens: rest.maxTokens,
+            json: rest.json,
+          }),
+        callArgs: { system, messages, maxTokens, json },
+        tierNameOf: nimTierName,
+        startTier,
+        escalate,
+        contextTokens,
+        // 斷路器分開計數：NIM 跳開不該連帶把 Together/OpenRouter 也算成失敗
+        breakerPrefix: 'finops-nim',
+        providerLabel: 'nim',
+      })
 
     const runOnTogether = () =>
       runTier({
@@ -122,7 +152,6 @@ export async function chatComplete({
         startTier,
         escalate,
         contextTokens,
-        // 斷路器分開計數：Together 跳開不該連帶把 OpenRouter 也算成失敗
         breakerPrefix: 'finops-together',
         providerLabel: 'together',
       })
@@ -150,31 +179,40 @@ export async function chatComplete({
 
     const base = { rail: 'finops', railReason: decision.reason, railForced: decision.forced }
 
-    if (isTogetherConfigured()) {
+    const providers = [
+      { name: 'nim', envVar: 'NVIDIA_NIM_API_KEY', configured: isNimConfigured(), run: runOnNim },
+      { name: 'together', envVar: 'TOGETHER_API_KEY', configured: isTogetherConfigured(), run: runOnTogether },
+      { name: 'openrouter', envVar: 'OPENROUTER_API_KEY', configured: isFinopsConfigured(), run: runOnOpenRouter },
+    ]
+
+    const attempted = []
+    for (const p of providers) {
+      if (!p.configured) {
+        attempted.push({ name: p.name, error: `${p.envVar} not set` })
+        continue
+      }
       try {
-        return { ...(await runOnTogether()), ...base }
-      } catch (togetherErr) {
-        if (!isFinopsConfigured()) throw togetherErr
-        // 保留原始錯誤：否則事後只看得到「用了 OpenRouter」，
-        // 看不出「為什麼降級」，排查時等於沒有線索。
+        const result = await p.run()
         return {
-          ...(await runOnOpenRouter()),
+          ...result,
           ...base,
-          fellBack: true,
-          fallbackFrom: 'together',
-          fallbackReason: togetherErr?.message ?? String(togetherErr),
+          ...(attempted.length
+            ? {
+                fellBack: true,
+                fallbackFrom: attempted[0].name,
+                fallbackChain: attempted.map((a) => a.name),
+                fallbackReason: attempted[attempted.length - 1].error,
+              }
+            : {}),
         }
+      } catch (e) {
+        attempted.push({ name: p.name, error: e?.message ?? String(e) })
       }
     }
 
-    // 沒設 TOGETHER_API_KEY 才直接用 OpenRouter（過渡期／本機）
-    return {
-      ...(await runOnOpenRouter()),
-      ...base,
-      fellBack: true,
-      fallbackFrom: 'together',
-      fallbackReason: 'TOGETHER_API_KEY not set',
-    }
+    throw new Error(
+      `All finops providers failed/unconfigured: ${attempted.map((a) => `${a.name}: ${a.error}`).join(' | ')}`,
+    )
   }
 
   // enterprise

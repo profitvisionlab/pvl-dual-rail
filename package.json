@@ -1,7 +1,7 @@
 {
   "name": "pvl-dual-rail",
   "version": "0.2.0",
-  "description": "Dual-rail LLM router: FinOps (Together primary, OpenRouter fallback) × Enterprise (Vertex Gemini). Same Tri-Tier brain; internal data never leaves on FinOps.",
+  "description": "Dual-rail LLM router: FinOps (NVIDIA NIM primary through 2027-02-25, Together and OpenRouter fallback) × Enterprise (Vertex Gemini). Same Tri-Tier brain; internal data never leaves on FinOps.",
   "type": "module",
   "license": "MIT",
   "private": false,
@@ -19,6 +19,7 @@
   },
   "keywords": [
     "llm",
+    "nvidia-nim",
     "together-ai",
     "openrouter",
     "vertex-ai",

@@ -4,12 +4,14 @@ Same Tri-Tier scheduling brain, **two rails**, with a hard policy gate in code (
 
 | Rail | Adapter | Allowed data |
 |------|---------|--------------|
-| **finops** | [Together AI](https://together.ai) (primary) with [OpenRouter](https://openrouter.ai) fallback | `public` / `published` only |
+| **finops** | [NVIDIA NIM](https://build.nvidia.com) (primary) → [Together AI](https://together.ai) → [OpenRouter](https://openrouter.ai) fallback chain | `public` / `published` only |
 | **enterprise** | Vertex AI Gemini (`ENTERPRISE_ADAPTER=mock` for offline proof) | `internal` / `internalContext: true` |
 
-> Together became the primary FinOps provider on 2026-08-13; OpenRouter is the
-> fallback. Rationale in [`src/adapters/together.mjs`](./src/adapters/together.mjs):
-> an aggregation layer cannot control the jurisdiction where data lands.
+> NVIDIA NIM became the primary FinOps provider on 2026-08-25, for the
+> six-month free/high-quota window (through 2027-02-25) — rationale in
+> [`src/adapters/nim.mjs`](./src/adapters/nim.mjs). Together and OpenRouter
+> stay wired in as the second and third fallback; re-evaluate the order once
+> the free window ends.
 
 Brand: **PVL.AI**. GitHub: [`profitvisionlab/pvl-dual-rail`](https://github.com/profitvisionlab/pvl-dual-rail).
 
@@ -21,7 +23,7 @@ Brand: **PVL.AI**. GitHub: [`profitvisionlab/pvl-dual-rail`](https://github.com/
 
 ```bash
 npm test
-# → 10/10 passed (no GCP required; enterprise uses mock)
+# → 11/11 passed (no GCP required; enterprise uses mock)
 ```
 
 ## Install / use
@@ -62,8 +64,9 @@ src/
   router.mjs          # Tri-Tier + circuit breaker
   env.mjs             # env helpers
   adapters/
-    together.mjs      # finops primary
-    openrouter.mjs    # finops fallback
+    nim.mjs           # finops primary (through 2027-02-25)
+    together.mjs      # finops 2nd fallback
+    openrouter.mjs    # finops 3rd fallback
     enterprise.mjs    # Vertex (+ mock)
 scripts/smoke.mjs     # offline-verifiable claims (npm test)
 ```
