@@ -185,10 +185,16 @@ export async function chatComplete({
       { name: 'openrouter', envVar: 'OPENROUTER_API_KEY', configured: isFinopsConfigured(), run: runOnOpenRouter },
     ]
 
-    const attempted = []
+    // 「沒設定」與「試了但失敗」要分開記：只有後者算降級。
+    // 混在一起的話，沒設 NIM 金鑰時每一次正常的 Together 呼叫都會被標成
+    // 「從 nim 降級」—— 日誌看起來像天天在降級，真正的降級反而被淹沒。
+    // 這與 buyerKb/retrieve.ts 移除那個永遠成立的 fallback 是同一條理由：
+    // 降級要能被區分成「暫時性」與「設定就是這樣」。
+    const skipped = []
+    const failed = []
     for (const p of providers) {
       if (!p.configured) {
-        attempted.push({ name: p.name, error: `${p.envVar} not set` })
+        skipped.push({ name: p.name, error: `${p.envVar} not set` })
         continue
       }
       try {
@@ -196,19 +202,21 @@ export async function chatComplete({
         return {
           ...result,
           ...base,
-          ...(attempted.length
+          ...(failed.length
             ? {
                 fellBack: true,
-                fallbackFrom: attempted[0].name,
-                fallbackChain: attempted.map((a) => a.name),
-                fallbackReason: attempted[attempted.length - 1].error,
+                fallbackFrom: failed[0].name,
+                fallbackChain: failed.map((a) => a.name),
+                fallbackReason: failed[failed.length - 1].error,
               }
             : {}),
+          ...(skipped.length ? { skippedProviders: skipped.map((s) => s.name) } : {}),
         }
       } catch (e) {
-        attempted.push({ name: p.name, error: e?.message ?? String(e) })
+        failed.push({ name: p.name, error: e?.message ?? String(e) })
       }
     }
+    const attempted = [...failed, ...skipped]
 
     throw new Error(
       `All finops providers failed/unconfigured: ${attempted.map((a) => `${a.name}: ${a.error}`).join(' | ')}`,
