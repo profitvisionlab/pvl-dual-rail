@@ -76,6 +76,12 @@ export const MODEL_QUIRKS = {
   'nvidia/nemotron-3-nano-30b-a3b': {
     body: { chat_template_kwargs: { enable_thinking: false } },
   },
+  // 2026-08-26 正式環境抓到：呼叫端給 maxTokens=400 時，推理把預算吃光，
+  // 回來是截斷內容，整個 tier3 降級到 Together。bench 當時用 8000 跑得通
+  // （平均 completion_tokens 2058，含推理），所以下限抓 4000 留餘裕。
+  // 注意這顆在 Together 上同樣的 400 預算卻能正常回答 —— 同一個模型 ID
+  // 在不同供應商的行為不同，這正是「不要跨供應商套用實測結論」的實例。
+  'nvidia/nemotron-3-ultra-550b-a55b': { minTokens: 4000 },
 }
 
 export function nimTierName(tier) {
