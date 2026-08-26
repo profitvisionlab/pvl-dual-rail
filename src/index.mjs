@@ -10,6 +10,7 @@
 // PVL.AI semi-open unit: https://github.com/profitvisionlab/pvl-dual-rail
 
 import { resolveRail } from './policy.mjs'
+import { envInt } from './env.mjs'
 import {
   resolveTier,
   runTier,
@@ -100,7 +101,20 @@ export async function chatComplete({
   internalContext = false,
 } = {}) {
   const decision = resolveRail({ rail: railOpt, sensitivity, internalContext })
-  const startTier = resolveTier({ tier: tierOpt, task, contextTokens })
+  // DUAL_RAIL_FORCE_TIER：把整條 finops 軌釘在某一層，蓋過 task 對應與
+  // contextTokens 啟發式。這是 2026-08 免費期的臨時設定 —— Ben 要在 NIM
+  // 免費額度內盡量跑前沿模型（tier3）累積商轉依據，而不是讓便宜任務自動
+  // 落到 tier1。
+  //
+  // 🔴 2027-02-25 免費期滿要拿掉，否則所有輕量任務都會用旗艦模型付全價。
+  // 刻意用環境變數而非寫死：拿掉只要改 Cloud Run 設定，不必重新部署程式碼。
+  // enterprise 軌不受影響（它有自己的成本結構與合規理由）。
+  const forced = decision.rail === 'finops' ? envInt('DUAL_RAIL_FORCE_TIER', null) : null
+  const startTier = resolveTier({
+    tier: (forced === 1 || forced === 2 || forced === 3) ? forced : tierOpt,
+    task,
+    contextTokens,
+  })
 
   if (decision.rail === 'finops') {
     // ── FinOps 軌：NIM 主 → Together → OpenRouter 三層備援 ───────────────
