@@ -82,6 +82,14 @@ export const MODEL_QUIRKS = {
   // 注意這顆在 Together 上同樣的 400 預算卻能正常回答 —— 同一個模型 ID
   // 在不同供應商的行為不同，這正是「不要跨供應商套用實測結論」的實例。
   'nvidia/nemotron-3-ultra-550b-a55b': { minTokens: 4000 },
+  // 2026-08-27：Ultra 當天在 NIM 與 Together 同時 EOL，主力換成 gpt-oss-120b。
+  // 它同樣是推理模型 —— 呼叫端給 maxTokens=150 時，實測 content 只剩 9 個字元
+  // （推理把預算吃掉），撞上 router 的 MIN_VALID_REPLY_CHARS=40 而整層判失敗；
+  // 預算再緊一點就直接 finish_reason='length' 被截斷防護擋下。兩種都會讓
+  // NIM 整條軌降級到 Together，而且日誌上長得像「NIM 掛了」。
+  // 直連實測：150→9 字元、500→57、1000→96，1000 以上才穩定可用。下限抓 2000。
+  'openai/gpt-oss-120b': { minTokens: 2000 },
+  'openai/gpt-oss-20b': { minTokens: 2000 },
 }
 
 export function nimTierName(tier) {
