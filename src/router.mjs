@@ -130,6 +130,15 @@ export async function runTier({
         attempts.push({ tier, model: result.model, skipped: 'short-reply' })
         continue
       }
+      // C1：結構化輸出被 max_tokens 切斷＝整包報廢，不能當成功回傳；還有更高階就升，沒有就丟錯。
+      if (result.truncated && callArgs?.json) {
+        attempts.push({ tier, model: result.model, skipped: 'truncated-json' })
+        if (tier < maxTier) continue
+        const err = new Error(`JSON output truncated at max_tokens on ${result.model}（finish_reason=${result.finishReason}）——調高 maxTokens 或縮小輸入`)
+        err.code = 'DUAL_RAIL_TRUNCATED_JSON'
+        err.attempts = attempts
+        throw err
+      }
 
       breakerRecordSuccess(key)
       const escalated = tier > startTier
@@ -141,6 +150,10 @@ export async function runTier({
         tierName: tierNameOf?.(tier) || `tier-${tier}`,
         usage: result.usage || null,
         providerSlug: result.providerSlug || null,
+        // C1（2026-09-06）：統一旗標，讓每個消費端不必各自解讀 finish_reason
+        finishReason: result.finishReason ?? null,
+        truncated: Boolean(result.truncated),
+        reasoningExhausted: Boolean(result.reasoningExhausted),
         escalatedReason: escalated
           ? `escalated-from-tier-${startTier}`
           : (typeof contextTokens === 'number' && contextTokens > HEAVY_CONTEXT_TOKENS

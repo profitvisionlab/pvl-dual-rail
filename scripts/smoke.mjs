@@ -19,6 +19,7 @@ catch { /* optional */ }
 
 import { resolveRail, finopsAllowed } from '../src/policy.mjs'
 import { chatComplete, resetCircuitBreakers } from '../src/index.mjs'
+import { assertAsciiKey, finishFlags } from '../src/env.mjs'
 
 const results = []
 function ok(name, cond, detail = '') {
@@ -127,6 +128,19 @@ if (process.env.OPENROUTER_API_KEY) {
 } else {
   ok('finops live skipped (no OPENROUTER_API_KEY)', true, 'policy-only run')
 }
+
+// ── C1／C2（2026-09-06）：結果旗標與 key 預檢，不需網路 ──
+ok('finishFlags: stop → 無旗標', (() => { const f = finishFlags('stop', { hasContent: true }); return !f.truncated && !f.reasoningExhausted && f.finishReason === 'stop' })())
+ok('finishFlags: length＋內容 → truncated', finishFlags('length', { hasContent: true, hasReasoning: true }).truncated === true)
+ok('finishFlags: length＋無內容＋reasoning → reasoningExhausted', (() => { const f = finishFlags('length', { hasContent: false, hasReasoning: true }); return f.reasoningExhausted && !f.truncated })())
+ok('finishFlags: Gemini MAX_TOKENS 也算 length', finishFlags('MAX_TOKENS', { hasContent: true }).truncated === true)
+ok('assertAsciiKey: 正常 key 通過', assertAsciiKey('X', 'sk-abc_123') === 'sk-abc_123')
+ok('assertAsciiKey: 含中文直接擋', (() => { try { assertAsciiKey('X', 'sk-abc你'); return false } catch (e) { return e.code === 'DUAL_RAIL_BAD_KEY' && /位置 6/.test(e.message) } })())
+ok('assertAsciiKey: 含換行直接擋', (() => { try { assertAsciiKey('X', 'sk-abc\n'); return false } catch (e) { return e.code === 'DUAL_RAIL_BAD_KEY' } })())
+try {
+  const r = await chatComplete({ system: 's', messages: [{ role: 'user', content: 'hi' }], internalContext: true })
+  ok('enterprise mock 結果帶三個旗標', 'truncated' in r && 'reasoningExhausted' in r && 'finishReason' in r && r.truncated === false, JSON.stringify({ f: r.finishReason, t: r.truncated, x: r.reasoningExhausted }))
+} catch (e) { ok('enterprise mock 結果帶三個旗標', false, e.message) }
 
 const failed = results.filter((r) => !r.pass)
 console.log(`\n${results.length - failed.length}/${results.length} passed`)

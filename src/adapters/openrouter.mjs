@@ -1,7 +1,7 @@
 // FinOps rail adapter — OpenRouter Tri-Tier (cost path).
 // Must never receive internalContext payloads (enforced by policy before call).
 
-import { envList, envInt } from '../env.mjs'
+import { envList, envInt, assertAsciiKey, finishFlags } from '../env.mjs'
 
 const PROVIDER_ORDER_REALTIME = envList(
   'OPENROUTER_PROVIDER_ORDER',
@@ -101,8 +101,7 @@ export async function callOpenRouter({
   json = false,
   mode = 'realtime',
 }) {
-  const key = process.env.OPENROUTER_API_KEY
-  if (!key) throw new Error('FinOps rail: OPENROUTER_API_KEY missing')
+  const key = assertAsciiKey('OPENROUTER_API_KEY', process.env.OPENROUTER_API_KEY)
 
   const sys = normalizeSystem(system)
   const msgPayload = []
@@ -147,11 +146,14 @@ export async function callOpenRouter({
         throw err
       }
       const data = await resp.json()
+      const choice = data.choices?.[0]
+      const text = choice?.message?.content?.trim() || ''
       return {
-        text: data.choices?.[0]?.message?.content?.trim() || '',
+        text,
         model: data.model || models[0],
         usage: data.usage || null,
         providerSlug: data.provider || null,
+        ...finishFlags(choice?.finish_reason, { hasContent: text.length > 0, hasReasoning: Boolean(choice?.message?.reasoning) }),
       }
     } catch (e) {
       lastErr = e
