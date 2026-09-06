@@ -19,7 +19,7 @@
 // API 形狀與 OpenAI 相容（/v1/chat/completions），所以這支適配器
 // 刻意維持與 openrouter.mjs 相同的匯出介面，router 不需要知道差別。
 
-import { envInt, envList } from '../env.mjs'
+import { envInt, envList, assertAsciiKey, finishFlags } from '../env.mjs'
 
 const API_URL = process.env.TOGETHER_BASE_URL || 'https://api.together.xyz/v1/chat/completions'
 const MAX_ATTEMPTS = envInt('TOGETHER_MAX_ATTEMPTS', 3)
@@ -102,8 +102,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
  * 全部失敗才丟出 —— 與 openrouter.mjs 的行為一致，讓 router 可以互換。
  */
 export async function callTogether({ models, system, messages, maxTokens, json }) {
-  const key = process.env.TOGETHER_API_KEY
-  if (!key) throw new Error('TOGETHER_API_KEY missing')
+  const key = assertAsciiKey('TOGETHER_API_KEY', process.env.TOGETHER_API_KEY)
 
   const payload = (model) => ({
     model,
@@ -152,11 +151,14 @@ export async function callTogether({ models, system, messages, maxTokens, json }
         const text = choice?.message?.content
 
         if (typeof text === 'string' && text.length) {
+          // 有內容但撞 length＝被截斷：不丟錯，回傳並打 truncated 旗標，由 router／呼叫端決定
+          // （結構化輸出視為整包報廢並升階；散文可能勉強可用）。C1，2026-09-06。
           return {
             text,
             model,
             provider: 'together',
             usage: jsonBody.usage ?? null,
+            ...finishFlags(choice?.finish_reason, { hasContent: true, hasReasoning: Boolean(choice?.message?.reasoning) }),
             // 推理模型會另外回 reasoning；保留供除錯，但不當成答案
             ...(choice?.message?.reasoning ? { reasoning: choice.message.reasoning } : {}),
           }

@@ -13,7 +13,7 @@
 // API 形狀是 OpenAI 相容（/v1/chat/completions），所以刻意維持與
 // together.mjs／openrouter.mjs 相同的匯出介面，router 不需要知道差別。
 
-import { envInt, envList } from '../env.mjs'
+import { envInt, envList, assertAsciiKey, finishFlags } from '../env.mjs'
 
 const API_URL = process.env.NIM_BASE_URL || 'https://integrate.api.nvidia.com/v1/chat/completions'
 const MAX_ATTEMPTS = envInt('NIM_MAX_ATTEMPTS', 3)
@@ -112,7 +112,7 @@ export async function callNim({ models, system, messages, maxTokens, json }) {
   // .trim()：.env 貼值常見尾隨空白，直接送進 Authorization header 會產生
   // 「看起來對但實際 401」的錯誤，訊息不會告訴你是空白搞的鬼。
   const key = process.env.NVIDIA_NIM_API_KEY?.trim()
-  if (!key) throw new Error('NVIDIA_NIM_API_KEY missing')
+  assertAsciiKey('NVIDIA_NIM_API_KEY', key)
 
   const payload = (model) => {
     const quirks = MODEL_QUIRKS[model] ?? {}
@@ -184,6 +184,7 @@ export async function callNim({ models, system, messages, maxTokens, json }) {
             model,
             provider: 'nim',
             usage: jsonBody.usage ?? null,
+            ...finishFlags(choice?.finish_reason, { hasContent: true, hasReasoning: Boolean(choice?.message?.reasoning) }),
             ...(choice?.message?.reasoning ? { reasoning: choice.message.reasoning } : {}),
           }
         }

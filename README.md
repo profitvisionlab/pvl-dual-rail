@@ -15,6 +15,24 @@ Same Tri-Tier scheduling brain, **two rails**, with a hard policy gate in code (
 
 Brand: **PVL.AI**. GitHub: [`profitvisionlab/pvl-dual-rail`](https://github.com/profitvisionlab/pvl-dual-rail).
 
+## Fallback order（2026-09-06 Ben 定案）
+
+`finops`：NIM → Together → **OpenRouter 留在最後當備胎**。TWB2B 的稽核功能直連 Anthropic＋Together、不走 OpenRouter，
+那是它的選擇；集團 dual-rail 的第三層不拆。
+
+## Result shape（C1，2026-09-06）
+
+每次 `chatComplete` 回傳除了 `text／model／usage／tier／rail` 之外，一律帶三個旗標：
+
+| 欄位 | 意思 | 該怎麼辦 |
+|---|---|---|
+| `finishReason` | 供應商原值（`stop`／`length`／`STOP`…） | 記帳用 |
+| `reasoningExhausted` | 推理把 max_tokens 吃光、沒答案 | 調高 maxTokens 或換非推理模型（adapter 會直接丟錯並換模型） |
+| `truncated` | 有答案但被切斷 | `json:true` 時 router 視為失敗並升階（`DUAL_RAIL_TRUNCATED_JSON`）；散文回傳給呼叫端自行決定 |
+
+三把 FinOps key 在發請求前做 ASCII 預檢（`assertAsciiKey`），混進中文或換行直接丟 `DUAL_RAIL_BAD_KEY`，不再燒 96 次無效呼叫。
+這兩條是從 `taiwan-b2b-bridge/src/ai/llm.ts` 的紀律抽入的，供應商無關。
+
 ## Hard rule (verifiable)
 
 `internalContext: true` **never** calls FinOps — and neither does

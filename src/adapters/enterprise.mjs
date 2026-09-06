@@ -3,7 +3,7 @@
 // Production: VERTEX_PROJECT_ID + Application Default Credentials / VERTEX_ACCESS_TOKEN
 // Verification: ENTERPRISE_ADAPTER=mock (no network; proves policy + tier path)
 
-import { envList, envInt } from '../env.mjs'
+import { envList, envInt, finishFlags } from '../env.mjs'
 
 const REQUEST_TIMEOUT_MS = envInt('VERTEX_TIMEOUT_MS', 45_000)
 const LOCATION = process.env.VERTEX_LOCATION || 'us-central1'
@@ -97,6 +97,7 @@ export async function callEnterprise({
       text: `[enterprise-mock · ${model}] OK — boundary path engaged. Preview: ${preview || '(empty)'}`.padEnd(48, '.'),
       model,
       usage: null,
+      ...finishFlags('STOP', { hasContent: true }),  // mock：永遠完整
       providerSlug: 'mock-vertex',
     }
   }
@@ -145,6 +146,7 @@ export async function callEnterprise({
         text,
         model,
         usage: data.usageMetadata || null,
+        ...finishFlags(data.candidates?.[0]?.finishReason, { hasContent: true, hasReasoning: false }),
         providerSlug: 'vertex-ai',
       }
     } catch (e) {
