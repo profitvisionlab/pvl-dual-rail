@@ -18,12 +18,17 @@ Brand: **PVL.AI**. GitHub: [`profitvisionlab/pvl-dual-rail`](https://github.com/
 
 `finops`：**Together（主）→ OpenRouter（備援）**。OpenRouter 只在 Together 斷線、限流或斷路器跳開時接手。
 
-**NVIDIA NIM 於 2026-09-07 除役**，adapter 已從供應鏈移除（程式碼保留在 git 歷史）。
-除役的直接原因是一個實測到的事實：正式環境 `pvl-api` 的 NIM 設定在 2026-08-31 的
-revision 00040／00041 掉光（金鑰、三層模型清單、DUAL_RAIL_FORCE_TIER 全沒了），
-之後七天 FinOps 軌其實一直跑在 Together 上，而程式、README 與部署文件都還寫著
-「NIM 是主力」。與其修回一個沒人在用、且目錄以「天」為單位變動（一天 101 顆 → 83 顆、
-選定的模型量完隔天 EOL）的供應商，不如承認現況：**Together 已經是主力，就讓它是主力。**
+**NVIDIA NIM 於 2026-09-07 從供應鏈移除**，adapter 已刪除（程式碼保留在 git 歷史）。
+
+這是**補完 2026-08-31 的決定**，不是新決定。當天 Ben 因「服務需要穩定」把 NIM 從
+正式環境（`pvl-api` revision 00040／00041）拔掉，理由記在 `pvl-os/.env.example`
+（commit 3e279e4），全部是實測：目錄變動以「天」為單位（2026-08-25 選定的 tier1／tier2
+隔天就 410 EOL）、「列在 `GET /v1/models`」不等於「叫得到」（兩次抽查都有 4–6 顆實打 404）、
+供應商對已 EOL 的模型仍回報 ACTIVE、主力 ultra-550b 間歇 503，且品質輸給 Together 的
+DeepSeek（相似度 0.49 vs 0.53，輸出還多一倍）。
+
+那次只動了環境變數與該檔——**本 repo 整個、`pvl-os` 的 README 與部署文件、
+`/llm/selfcheck` 都還宣稱 NIM 是主力**。本次把程式與文件一次補齊。
 
 `DUAL_RAIL_FORCE_TIER` 的理由（NIM 免費期內讓旗艦吃真實流量）也隨之消失——
 **預設就該是沒有設定**，在 Together 上釘 tier3 等於每個輕量任務都付旗艦價。
