@@ -1,11 +1,13 @@
 // Dual-rail chatComplete — shared Tri-Tier brain + policy gate + adapters.
 //
-//   rail=finops     → NVIDIA NIM（主，至 2027-02-25）／Together／OpenRouter（備援鏈）。Public / published only.
+//   rail=finops     → Together（主）／OpenRouter（備援）。Public / published only.
 //   rail=enterprise → Vertex Gemini (boundary). Required when internalContext.
 //
-// FinOps 軌自 2026-08-25 起以 NVIDIA NIM 為主力供應商（六個月免費／高額度期間，
-// 理由見 adapters/nim.mjs 檔頭）；Together 退居第二備援，OpenRouter 第三備援。
-// 2027-02-25 免費期滿後要重新評估這個順序。
+// 2026-09-07 Ben 定案：**NVIDIA NIM 除役**，FinOps 軌改以 Together 為主力，
+// OpenRouter 為唯一備援（Together 斷線／限流／斷路器跳開時才接手）。
+// 除役理由見 README「Provider chain」；NIM adapter 的程式碼保留在 git 歷史，
+// 不留在供應鏈上——留著一個沒有金鑰、每次呼叫都被記成 skipped 的供應商，
+// 只會讓日誌多一行永遠成立的雜訊。
 //
 // PVL.AI semi-open unit: https://github.com/profitvisionlab/pvl-dual-rail
 
@@ -18,12 +20,6 @@ import {
   resetCircuitBreakers,
   HEAVY_CONTEXT_TOKENS,
 } from './router.mjs'
-import {
-  callNim,
-  listNimModels,
-  nimTierName,
-  isNimConfigured,
-} from './adapters/nim.mjs'
 import {
   callTogether,
   listTogetherModels,
@@ -50,7 +46,6 @@ export {
   getCircuitBreakerStatus,
   resetCircuitBreakers,
   HEAVY_CONTEXT_TOKENS,
-  isNimConfigured,
   isTogetherConfigured,
   isFinopsConfigured,
   isEnterpriseConfigured,
@@ -102,12 +97,11 @@ export async function chatComplete({
 } = {}) {
   const decision = resolveRail({ rail: railOpt, sensitivity, internalContext })
   // DUAL_RAIL_FORCE_TIER：把整條 finops 軌釘在某一層，蓋過 task 對應與
-  // contextTokens 啟發式。這是 2026-08 免費期的臨時設定 —— Ben 要在 NIM
-  // 免費額度內盡量跑前沿模型（tier3）累積商轉依據，而不是讓便宜任務自動
-  // 落到 tier1。
+  // contextTokens 啟發式。
   //
-  // 🔴 2027-02-25 免費期滿要拿掉，否則所有輕量任務都會用旗艦模型付全價。
-  // 刻意用環境變數而非寫死：拿掉只要改 Cloud Run 設定，不必重新部署程式碼。
+  // 🔴 **預設就該是沒有設定。** 它原本的理由是 NIM 免費期內讓旗艦吃真實流量；
+  // NIM 已於 2026-09-07 除役，那個理由消失了。在 Together 上釘 tier3 等於
+  // 每個輕量任務都付旗艦價——要用它必須有當下的、寫下來的理由。
   // enterprise 軌不受影響（它有自己的成本結構與合規理由）。
   const forced = decision.rail === 'finops' ? envInt('DUAL_RAIL_FORCE_TIER', null) : null
   const startTier = resolveTier({
@@ -117,38 +111,15 @@ export async function chatComplete({
   })
 
   if (decision.rail === 'finops') {
-    // ── FinOps 軌：NIM 主 → Together → OpenRouter 三層備援 ───────────────
-    // NIM 是目前的主力（六個月免費／高額度期間，至 2027-02-25，理由見
-    // adapters/nim.mjs 檔頭）。Together／OpenRouter 保留為備援 —— 額度
-    // 耗盡、限流、或斷路器跳開時才接手，那是降級，所以回傳值會標
-    // fellBack，讓呼叫端與日誌看得出來「為什麼換了供應商」，不是只看到
-    // 換了供應商這個結果。
-    if (!isNimConfigured() && !isTogetherConfigured() && !isFinopsConfigured()) {
+    // ── FinOps 軌：Together 主 → OpenRouter 備援（2026-09-07 起）────────────
+    // OpenRouter 只在 Together 斷線、限流或斷路器跳開時接手，那是降級，
+    // 所以回傳值會標 fellBack，讓呼叫端與日誌看得出來「為什麼換了供應商」，
+    // 不是只看到換了供應商這個結果。
+    if (!isTogetherConfigured() && !isFinopsConfigured()) {
       throw new Error(
-        'FinOps rail selected but none of NVIDIA_NIM_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY is set',
+        'FinOps rail selected but neither TOGETHER_API_KEY nor OPENROUTER_API_KEY is set',
       )
     }
-
-    const runOnNim = () =>
-      runTier({
-        listModels: listNimModels,
-        callTier: ({ models, ...rest }) =>
-          callNim({
-            models,
-            system: rest.system,
-            messages: rest.messages,
-            maxTokens: rest.maxTokens,
-            json: rest.json,
-          }),
-        callArgs: { system, messages, maxTokens, json },
-        tierNameOf: nimTierName,
-        startTier,
-        escalate,
-        contextTokens,
-        // 斷路器分開計數：NIM 跳開不該連帶把 Together/OpenRouter 也算成失敗
-        breakerPrefix: 'finops-nim',
-        providerLabel: 'nim',
-      })
 
     const runOnTogether = () =>
       runTier({
@@ -194,14 +165,13 @@ export async function chatComplete({
     const base = { rail: 'finops', railReason: decision.reason, railForced: decision.forced }
 
     const providers = [
-      { name: 'nim', envVar: 'NVIDIA_NIM_API_KEY', configured: isNimConfigured(), run: runOnNim },
       { name: 'together', envVar: 'TOGETHER_API_KEY', configured: isTogetherConfigured(), run: runOnTogether },
       { name: 'openrouter', envVar: 'OPENROUTER_API_KEY', configured: isFinopsConfigured(), run: runOnOpenRouter },
     ]
 
     // 「沒設定」與「試了但失敗」要分開記：只有後者算降級。
-    // 混在一起的話，沒設 NIM 金鑰時每一次正常的 Together 呼叫都會被標成
-    // 「從 nim 降級」—— 日誌看起來像天天在降級，真正的降級反而被淹沒。
+    // 混在一起的話，沒設 OpenRouter 金鑰時每一次正常的 Together 呼叫都會被標成
+    // 「降級」—— 日誌看起來像天天在降級，真正的降級反而被淹沒。
     // 這與 buyerKb/retrieve.ts 移除那個永遠成立的 fallback 是同一條理由：
     // 降級要能被區分成「暫時性」與「設定就是這樣」。
     const skipped = []
