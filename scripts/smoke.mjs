@@ -93,7 +93,8 @@ try {
   ok('explicit enterprise rail', false, e.message)
 }
 
-if (process.env.NVIDIA_NIM_API_KEY) {
+// FinOps 主力（Together）。模型清單未設定時視為未接，不算失敗——本套件不內建清單。
+if (process.env.TOGETHER_API_KEY && process.env.TOGETHER_TIER1_MODELS) {
   try {
     const r = await chatComplete({
       system: 'Reply with exactly: pong',
@@ -103,12 +104,12 @@ if (process.env.NVIDIA_NIM_API_KEY) {
       tier: 1,
       escalate: true,
     })
-    ok('finops live via NIM (optional)', r.rail === 'finops' && r.text.length > 0, `${r.provider} · ${r.model}`)
+    ok('finops live via Together (optional)', r.rail === 'finops' && r.text.length > 0, `${r.provider} · ${r.model}`)
   } catch (e) {
-    ok('finops live via NIM (optional)', false, e.message)
+    ok('finops live via Together (optional)', false, e.message)
   }
 } else {
-  ok('finops live via NIM skipped (no NVIDIA_NIM_API_KEY)', true, 'policy-only run')
+  ok('finops live via Together skipped (no TOGETHER_API_KEY/TIER1_MODELS)', true, 'policy-only run')
 }
 
 if (process.env.OPENROUTER_API_KEY) {

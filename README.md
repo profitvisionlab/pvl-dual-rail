@@ -4,21 +4,36 @@ Same Tri-Tier scheduling brain, **two rails**, with a hard policy gate in code (
 
 | Rail | Adapter | Allowed data |
 |------|---------|--------------|
-| **finops** | [NVIDIA NIM](https://build.nvidia.com) (primary) → [Together AI](https://together.ai) → [OpenRouter](https://openrouter.ai) fallback chain | `public` / `published` only |
+| **finops** | [Together AI](https://together.ai) (primary) → [OpenRouter](https://openrouter.ai) (fallback) | `public` / `published` only |
 | **enterprise** | Vertex AI Gemini (`ENTERPRISE_ADAPTER=mock` for offline proof) | `internal` / `internalContext: true` |
 
-> NVIDIA NIM became the primary FinOps provider on 2026-08-25, for the
-> six-month free/high-quota window (through 2027-02-25) — rationale in
-> [`src/adapters/nim.mjs`](./src/adapters/nim.mjs). Together and OpenRouter
-> stay wired in as the second and third fallback; re-evaluate the order once
-> the free window ends.
+> Together AI is the primary FinOps provider as of **2026-09-07**; OpenRouter is the
+> single fallback, engaged only when Together is unreachable, rate-limited, or its
+> circuit breaker is open. NVIDIA NIM was retired the same day — see
+> "Provider chain" below.
 
 Brand: **PVL.AI**. GitHub: [`profitvisionlab/pvl-dual-rail`](https://github.com/profitvisionlab/pvl-dual-rail).
 
-## Fallback order（2026-09-06 Ben 定案）
+## Provider chain（2026-09-07 Ben 定案）
 
-`finops`：NIM → Together → **OpenRouter 留在最後當備胎**。TWB2B 的稽核功能直連 Anthropic＋Together、不走 OpenRouter，
-那是它的選擇；集團 dual-rail 的第三層不拆。
+`finops`：**Together（主）→ OpenRouter（備援）**。OpenRouter 只在 Together 斷線、限流或斷路器跳開時接手。
+
+**NVIDIA NIM 於 2026-09-07 從供應鏈移除**，adapter 已刪除（程式碼保留在 git 歷史）。
+
+這是**補完 2026-08-31 的決定**，不是新決定。當天 Ben 因「服務需要穩定」把 NIM 從
+正式環境（`pvl-api` revision 00040／00041）拔掉，理由記在 `pvl-os/.env.example`
+（commit 3e279e4），全部是實測：目錄變動以「天」為單位（2026-08-25 選定的 tier1／tier2
+隔天就 410 EOL）、「列在 `GET /v1/models`」不等於「叫得到」（兩次抽查都有 4–6 顆實打 404）、
+供應商對已 EOL 的模型仍回報 ACTIVE、主力 ultra-550b 間歇 503，且品質輸給 Together 的
+DeepSeek（相似度 0.49 vs 0.53，輸出還多一倍）。
+
+那次只動了環境變數與該檔——**本 repo 整個、`pvl-os` 的 README 與部署文件、
+`/llm/selfcheck` 都還宣稱 NIM 是主力**。本次把程式與文件一次補齊。
+
+`DUAL_RAIL_FORCE_TIER` 的理由（NIM 免費期內讓旗艦吃真實流量）也隨之消失——
+**預設就該是沒有設定**，在 Together 上釘 tier3 等於每個輕量任務都付旗艦價。
+
+TWB2B 的稽核功能直連 Anthropic＋Together、不走 OpenRouter，那是它的選擇，與本套件無關。
 
 ## Result shape（C1，2026-09-06）
 
@@ -82,9 +97,8 @@ src/
   router.mjs          # Tri-Tier + circuit breaker
   env.mjs             # env helpers
   adapters/
-    nim.mjs           # finops primary (through 2027-02-25)
-    together.mjs      # finops 2nd fallback
-    openrouter.mjs    # finops 3rd fallback
+    together.mjs      # finops primary
+    openrouter.mjs    # finops fallback
     enterprise.mjs    # Vertex (+ mock)
 scripts/smoke.mjs     # offline-verifiable claims (npm test)
 ```
