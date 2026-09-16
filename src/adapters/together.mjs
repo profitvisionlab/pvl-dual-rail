@@ -13,18 +13,22 @@
 //      文字也走 Together 之後，同一把金鑰、同一套額度與費率口徑，
 //      不必為每個模態各養一份呼叫程式碼。
 //
-// OpenRouter 保留為備援：Together 掛掉、逾時、或斷路器跳開時才接手。
-// 見 ../index.mjs 的 FinOps 軌 failover 邏輯。
+// 備援順序由 DUAL_RAIL_FINOPS_CHAIN 決定（預設 together,openrouter）：
+// Together 掛掉、逾時、或斷路器跳開時才輪到下一家。見 ../index.mjs 的 failover 邏輯。
 //
-// API 形狀與 OpenAI 相容（/v1/chat/completions），所以這支適配器
-// 刻意維持與 openrouter.mjs 相同的匯出介面，router 不需要知道差別。
+// API 形狀與 OpenAI 相容（/v1/chat/completions），實作在 openai-compat.mjs，
+// 與 DeepInfra／Lightning 共用同一個迴圈；本檔只宣告設定並保留選型方法論。
 
-import { envInt, envList, assertAsciiKey, finishFlags } from '../env.mjs'
+import { createOpenAICompatAdapter, TIER_NAMES } from './openai-compat.mjs'
 
-const API_URL = process.env.TOGETHER_BASE_URL || 'https://api.together.xyz/v1/chat/completions'
-const MAX_ATTEMPTS = envInt('TOGETHER_MAX_ATTEMPTS', 3)
-const BACKOFF_BASE_MS = envInt('TOGETHER_BACKOFF_BASE_MS', 100)
-const REQUEST_TIMEOUT_MS = envInt('TOGETHER_TIMEOUT_MS', 45_000)
+const adapter = createOpenAICompatAdapter({
+  id: 'together',
+  label: 'Together',
+  envPrefix: 'TOGETHER',
+  // TOGETHER_BASE_URL 可給 base（…/v1）或完整 …/v1/chat/completions，兩種都接受
+  defaultBaseUrl: 'https://api.together.xyz/v1',
+  docHint: 'adapters/together.mjs 檔頭',
+})
 
 /**
  * 三層模型，對齊 router.mjs 的 Tri-Tier：
@@ -53,7 +57,7 @@ const REQUEST_TIMEOUT_MS = envInt('TOGETHER_TIMEOUT_MS', 45_000)
  *
  * 3. **推理模型的 maxTokens 不能給小。** 預算被推理吃光時，回來的是
  *    content:"" + finish_reason:"length" —— 看起來像模型壞了，其實只是沒錢寫答案。
- *    見下方 callTogether 的辨識邏輯。
+ *    見 openai-compat.mjs 的辨識邏輯。
  *
  * 4. **輸出品質要用可判定的指標量**，不要靠感覺。例如目標語言的文體一致性、
  *    是否混入其他書寫系統、要求的結構有沒有守住。這些都能寫成程式檢查，
@@ -64,129 +68,25 @@ const REQUEST_TIMEOUT_MS = envInt('TOGETHER_TIMEOUT_MS', 45_000)
  *   TOGETHER_TIER2_MODELS=modelC,modelD
  *   TOGETHER_TIER3_MODELS=modelE,modelF
  * 逗號分隔，依序當作 fallback 鏈：前一個失敗才換下一個。
+ *
+ * 0.3.0 起迴圈移到 openai-compat.mjs 與 DeepInfra／Lightning 共用，
+ * 設定改為呼叫當下讀 env（見該檔檔頭）。對外匯出名稱不變。
  */
-export const FINOPS_TIERS = {
-  1: { name: 'light', models: envList('TOGETHER_TIER1_MODELS', '') },
-  2: { name: 'standard', models: envList('TOGETHER_TIER2_MODELS', '') },
-  3: { name: 'flagship', models: envList('TOGETHER_TIER3_MODELS', '') },
-}
 
-export function listTogetherModels(tier) {
-  const models = FINOPS_TIERS[tier]?.models
-  // 空清單會讓 runTier 拿到零個模型後靜默跳過整層，看起來像「這層沒失敗」。
-  // 寧可在這裡明確炸掉，訊息直接指出要設哪個環境變數。
-  if (!models?.length) {
-    throw new Error(
-      `TOGETHER_TIER${tier}_MODELS 未設定。本套件不內建模型清單 —— ` +
-        `供應商目錄變動快，寫死的預設過期時會變成「看似能跑但實際 400」。` +
-        `請依 adapters/together.mjs 檔頭的挑選方法論自行實測後填入（逗號分隔）。`,
-    )
-  }
-  return models.slice()
-}
+// 相容舊匯出：models 改成 getter，讀的是當下的 env
+export const FINOPS_TIERS = Object.fromEntries(
+  [1, 2, 3].map((t) => [t, {
+    name: TIER_NAMES[t],
+    get models() { return (process.env[`TOGETHER_TIER${t}_MODELS`] || '').split(',').map((s) => s.trim()).filter(Boolean) },
+  }]),
+)
 
-export function togetherTierName(tier) {
-  return FINOPS_TIERS[tier]?.name || `tier${tier}`
-}
-
-export function isTogetherConfigured() {
-  return Boolean(process.env.TOGETHER_API_KEY)
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+export const listTogetherModels = adapter.listModels
+export const togetherTierName = adapter.tierName
+export const isTogetherConfigured = adapter.isConfigured
 
 /**
- * 呼叫 Together 的 chat completions。
- *
- * 逐一嘗試 models 陣列裡的模型：某個模型 404／限流就換下一個，
- * 全部失敗才丟出 —— 與 openrouter.mjs 的行為一致，讓 router 可以互換。
+ * 呼叫 Together 的 chat completions（含 tools／toolChoice 透傳）。
+ * 逐一嘗試 models 陣列裡的模型，全部失敗才丟出 —— 見 openai-compat.mjs。
  */
-export async function callTogether({ models, system, messages, maxTokens, json }) {
-  const key = assertAsciiKey('TOGETHER_API_KEY', process.env.TOGETHER_API_KEY)
-
-  const payload = (model) => ({
-    model,
-    messages: [
-      // system 可能是字串或 cache_control 區塊陣列（buildCachedSystem 產生）。
-      // Together 不支援 Anthropic 的 cache_control，收到陣列時攤平成純文字，
-      // 否則 API 會 400。
-      ...(system
-        ? [{ role: 'system', content: Array.isArray(system) ? system.map((b) => b.text ?? '').join('\n\n') : system }]
-        : []),
-      ...messages,
-    ],
-    max_tokens: maxTokens,
-    ...(json ? { response_format: { type: 'json_object' } } : {}),
-  })
-
-  let lastErr = null
-
-  for (const model of models) {
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const ctl = new AbortController()
-      const timer = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS)
-      try {
-        const res = await fetch(API_URL, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload(model)),
-          signal: ctl.signal,
-        })
-
-        if (res.status === 429 || res.status >= 500) {
-          // 可重試：限流或對方伺服器問題
-          lastErr = new Error(`Together ${res.status} on ${model}`)
-          await sleep(BACKOFF_BASE_MS * 2 ** (attempt - 1))
-          continue
-        }
-        if (!res.ok) {
-          // 不可重試（400/401/404…）→ 換下一個模型
-          const body = await res.text().catch(() => '')
-          lastErr = new Error(`Together ${res.status} on ${model}: ${body.slice(0, 160)}`)
-          break
-        }
-
-        const jsonBody = await res.json()
-        const choice = jsonBody?.choices?.[0]
-        const text = choice?.message?.content
-
-        if (typeof text === 'string' && text.length) {
-          // 有內容但撞 length＝被截斷：不丟錯，回傳並打 truncated 旗標，由 router／呼叫端決定
-          // （結構化輸出視為整包報廢並升階；散文可能勉強可用）。C1，2026-09-06。
-          return {
-            text,
-            model,
-            provider: 'together',
-            usage: jsonBody.usage ?? null,
-            ...finishFlags(choice?.finish_reason, { hasContent: true, hasReasoning: Boolean(choice?.message?.reasoning) }),
-            // 推理模型會另外回 reasoning；保留供除錯，但不當成答案
-            ...(choice?.message?.reasoning ? { reasoning: choice.message.reasoning } : {}),
-          }
-        }
-
-        // ⚠️ 部分推理模型把思考放在 message.reasoning，
-        // content 要等推理結束才填。maxTokens 太小時推理會把預算吃光，
-        // 回來就是 content:"" + finish_reason:"length" —— 看起來像模型壞了，
-        // 其實只是沒錢寫答案。明確辨識，否則整層會靜默失效。
-        if (choice?.finish_reason === 'length' && choice?.message?.reasoning) {
-          lastErr = new Error(
-            `Together: ${model} 的推理耗盡 max_tokens(${maxTokens})，尚未產出答案。` +
-              `推理模型請給更大的 maxTokens（建議 ≥1000），或改用非推理模型。`,
-          )
-          break
-        }
-
-        lastErr = new Error(`Together returned empty content on ${model}`)
-        break
-      } catch (err) {
-        lastErr = err
-        if (err?.name === 'AbortError') break // 逾時就換模型，不要繼續等
-        await sleep(BACKOFF_BASE_MS * 2 ** (attempt - 1))
-      } finally {
-        clearTimeout(timer)
-      }
-    }
-  }
-
-  throw lastErr ?? new Error('Together: all models failed')
-}
+export const callTogether = adapter.call

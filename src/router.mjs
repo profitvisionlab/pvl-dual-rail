@@ -126,7 +126,9 @@ export async function runTier({
     try {
       const result = await callTier({ ...callArgs, models, tier })
 
-      if (result.text.length < MIN_VALID_REPLY_CHARS && tier < maxTier) {
+      const toolCalls = Array.isArray(result.toolCalls) ? result.toolCalls : []
+      // 只回 tool_calls 的回覆沒有文字是正常的，不能被「太短」規則誤判而升階（0.3.0）
+      if (!toolCalls.length && result.text.length < MIN_VALID_REPLY_CHARS && tier < maxTier) {
         attempts.push({ tier, model: result.model, skipped: 'short-reply' })
         continue
       }
@@ -149,7 +151,12 @@ export async function runTier({
         tier,
         tierName: tierNameOf?.(tier) || `tier-${tier}`,
         usage: result.usage || null,
+        // null＝供應商沒報快取欄位，不是零命中
+        cachedTokens: Number.isFinite(result.cachedTokens) ? result.cachedTokens : null,
         providerSlug: result.providerSlug || null,
+        // 工具呼叫（0.3.0）：toolCalls 已正規化；message 是原始 assistant 訊息，供呼叫端原樣回填
+        toolCalls,
+        message: result.message ?? { role: 'assistant', content: result.text },
         // C1（2026-09-06）：統一旗標，讓每個消費端不必各自解讀 finish_reason
         finishReason: result.finishReason ?? null,
         truncated: Boolean(result.truncated),

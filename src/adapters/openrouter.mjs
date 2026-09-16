@@ -2,6 +2,7 @@
 // Must never receive internalContext payloads (enforced by policy before call).
 
 import { envList, envInt, assertAsciiKey, finishFlags } from '../env.mjs'
+import { toolFields, normalizeToolCalls, cachedTokensOf } from './openai-compat.mjs'
 
 const PROVIDER_ORDER_REALTIME = envList(
   'OPENROUTER_PROVIDER_ORDER',
@@ -100,6 +101,8 @@ export async function callOpenRouter({
   maxTokens,
   json = false,
   mode = 'realtime',
+  tools,
+  toolChoice,
 }) {
   const key = assertAsciiKey('OPENROUTER_API_KEY', process.env.OPENROUTER_API_KEY)
 
@@ -117,6 +120,7 @@ export async function callOpenRouter({
   }
   if (models.length === 1) body.model = models[0]
   if (json) body.response_format = { type: 'json_object' }
+  Object.assign(body, toolFields({ tools, toolChoice }))
 
   let lastErr
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -147,13 +151,17 @@ export async function callOpenRouter({
       }
       const data = await resp.json()
       const choice = data.choices?.[0]
-      const text = choice?.message?.content?.trim() || ''
+      const text = typeof choice?.message?.content === 'string' ? choice.message.content.trim() : ''
+      const toolCalls = normalizeToolCalls(choice?.message)
       return {
         text,
         model: data.model || models[0],
         usage: data.usage || null,
+        cachedTokens: cachedTokensOf(data.usage),
         providerSlug: data.provider || null,
-        ...finishFlags(choice?.finish_reason, { hasContent: text.length > 0, hasReasoning: Boolean(choice?.message?.reasoning) }),
+        toolCalls,
+        message: choice?.message ?? null,
+        ...finishFlags(choice?.finish_reason, { hasContent: text.length > 0 || toolCalls.length > 0, hasReasoning: Boolean(choice?.message?.reasoning) }),
       }
     } catch (e) {
       lastErr = e

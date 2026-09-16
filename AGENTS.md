@@ -18,3 +18,13 @@
 - The smoke suite runs fully offline (`ENTERPRISE_ADAPTER=mock`, no keys needed);
   new policy behavior ships with a smoke check in the same commit.
 - Node ≥ 20, ESM only (`.mjs`). No build step.
+- FinOps providers are OpenAI-compatible adapters built on
+  `src/adapters/openai-compat.mjs`; add a provider by declaring it there and
+  registering it in `FINOPS_PROVIDERS` (`src/index.mjs`). Never ship built-in
+  model lists — `*_TIER{1,2,3}_MODELS` come from env.
+- The default chain (`together,openrouter`) is an operations decision; changing
+  the default needs a written reason, not just a new adapter.
+- Adapter / chain / tool-call checks use mock `fetch` (`scripts/checks/`).
+  Tests must never hit a live API or need a real key.
+- Tool calling is passthrough only. The enterprise rail throws
+  `DUAL_RAIL_TOOLS_UNSUPPORTED`; it must never fall back to FinOps.

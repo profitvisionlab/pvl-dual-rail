@@ -1,0 +1,224 @@
+// OpenAI 相容 chat completions 的共用核心（0.3.0，2026-09-17）。
+//
+// Together／DeepInfra／Lightning 三家都是 /chat/completions 形狀，差別只在
+// 端點、金鑰名稱、env 前綴。以前每接一家就複製一份 together.mjs，三份迴圈
+// 各自漂移（重試、截斷辨識、推理耗盡）遲早會不一致——C1 的旗標就是在
+// 「每家各自解讀 finish_reason」這個坑裡踩了四次才統一的。
+// 所以迴圈只寫一次，各 adapter 只宣告自己的設定。
+//
+// OpenRouter 不走這裡：它有 models[]＋route:fallback＋provider 偏好，形狀不同；
+// 但它共用本檔的訊息／工具／usage 輔助函式，確保四家回傳形狀一致。
+//
+// 設定一律「呼叫當下」讀 env，不在載入時快照：
+//   · 測試可以逐案切換金鑰與模型清單，不必重新 import
+//   · 長駐程序改 env 後不用重啟就生效（金鑰輪替時有用）
+
+import { envInt, envList, assertAsciiKey, finishFlags } from '../env.mjs'
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/** 供 README 與錯誤訊息引用的三層名稱，對齊 router.mjs 的 Tri-Tier。 */
+export const TIER_NAMES = { 1: 'light', 2: 'standard', 3: 'flagship' }
+
+/**
+ * system 可能是字串或 cache_control 區塊陣列（buildCachedSystem 產生）。
+ * 非 Anthropic 端點不認 cache_control，收到陣列時攤平成純文字，否則會 400。
+ */
+export function flattenSystem(system) {
+  if (system == null || system === '') return null
+  if (typeof system === 'string') return system
+  if (Array.isArray(system)) return system.map((b) => (typeof b === 'string' ? b : b?.text ?? '')).join('\n\n')
+  return String(system)
+}
+
+/**
+ * 工具欄位原樣透傳（OpenAI function 格式）。沒給就完全不帶，
+ * 避免對不支援工具的模型送出空的 tools:[] 而被 400。
+ */
+export function toolFields({ tools, toolChoice } = {}) {
+  const out = {}
+  if (Array.isArray(tools) && tools.length) out.tools = tools
+  if (toolChoice != null && out.tools) out.tool_choice = toolChoice
+  return out
+}
+
+/**
+ * 把 assistant 訊息裡的 tool_calls 正規化為 [{id, name, arguments}]。
+ * arguments 一律是字串：OpenAI 規格是 JSON 字串，但有些相容端點回物件——
+ * 呼叫端若要 JSON.parse，形狀不一致就會在某一家靜默壞掉。
+ */
+export function normalizeToolCalls(message) {
+  const calls = message?.tool_calls
+  if (!Array.isArray(calls)) return []
+  return calls.map((tc) => {
+    const args = tc?.function?.arguments
+    return {
+      id: tc?.id ?? null,
+      name: tc?.function?.name ?? null,
+      arguments: typeof args === 'string' ? args : args == null ? '' : JSON.stringify(args),
+    }
+  })
+}
+
+/**
+ * usage 裡的快取命中 token 數。DeepInfra／OpenAI 放在 prompt_tokens_details.cached_tokens；
+ * Lightning 的 prompt_tokens_details 可能是 null，usage 本身也可能是 null——都回 null，不丟錯。
+ * null 的意思是「供應商沒報」，不是「零命中」，兩者在成本分析上要分開看。
+ */
+export function cachedTokensOf(usage) {
+  if (!usage || typeof usage !== 'object') return null
+  const v = usage.prompt_tokens_details?.cached_tokens ?? usage.cached_tokens ?? usage.cachedContentTokenCount
+  return Number.isFinite(v) ? v : null
+}
+
+/** base URL 或完整 URL 都接受：已經指到 /chat/completions 就原樣用。 */
+export function chatCompletionsUrl(base) {
+  const trimmed = String(base).replace(/\/+$/, '')
+  return /\/chat\/completions$/.test(trimmed) ? trimmed : `${trimmed}/chat/completions`
+}
+
+/**
+ * 建立一個 OpenAI 相容 adapter。
+ *
+ * @param {object} spec
+ * @param {string} spec.id           - chain 內的名稱（together／deepinfra／lightning）
+ * @param {string} spec.label        - 錯誤訊息用的顯示名
+ * @param {string} spec.envPrefix    - env 前綴（TOGETHER → TOGETHER_API_KEY、TOGETHER_TIER1_MODELS…）
+ * @param {string} spec.defaultBaseUrl
+ * @param {string} [spec.docHint]    - 模型清單未設定時，錯誤訊息指向哪份說明
+ */
+export function createOpenAICompatAdapter({ id, label, envPrefix, defaultBaseUrl, docHint }) {
+  const keyEnv = `${envPrefix}_API_KEY`
+  const tierEnv = (tier) => `${envPrefix}_TIER${tier}_MODELS`
+
+  const config = () => ({
+    url: chatCompletionsUrl(process.env[`${envPrefix}_BASE_URL`] || defaultBaseUrl),
+    maxAttempts: Math.max(1, envInt(`${envPrefix}_MAX_ATTEMPTS`, 3)),
+    backoffBaseMs: envInt(`${envPrefix}_BACKOFF_BASE_MS`, 100),
+    timeoutMs: envInt(`${envPrefix}_TIMEOUT_MS`, 45_000),
+  })
+
+  function listModels(tier) {
+    const models = envList(tierEnv(tier), '')
+    // 空清單會讓 runTier 拿到零個模型後靜默跳過整層，看起來像「這層沒失敗」。
+    // 寧可在這裡明確炸掉，訊息直接指出要設哪個環境變數。
+    if (!models.length) {
+      throw new Error(
+        `${tierEnv(tier)} 未設定。本套件不內建模型清單 —— ` +
+          `供應商目錄變動快，寫死的預設過期時會變成「看似能跑但實際 400」。` +
+          `請依 ${docHint || 'adapters/together.mjs 檔頭'}的挑選方法論自行實測後填入（逗號分隔）。`,
+      )
+    }
+    return models
+  }
+
+  const tierName = (tier) => TIER_NAMES[tier] || `tier${tier}`
+  const isConfigured = () => Boolean(process.env[keyEnv])
+
+  /**
+   * 逐一嘗試 models：某個模型 404／限流用盡就換下一個，全部失敗才丟出。
+   * 401／403 是金鑰層級問題，換模型也不會好 —— 直接丟出，不燒剩下的模型。
+   */
+  async function call({ models, system, messages, maxTokens, json, tools, toolChoice }) {
+    const key = assertAsciiKey(keyEnv, process.env[keyEnv])
+    const { url, maxAttempts, backoffBaseMs, timeoutMs } = config()
+    const sys = flattenSystem(system)
+
+    const payload = (model) => ({
+      model,
+      messages: [...(sys != null ? [{ role: 'system', content: sys }] : []), ...(messages || [])],
+      max_tokens: maxTokens,
+      ...(json ? { response_format: { type: 'json_object' } } : {}),
+      ...toolFields({ tools, toolChoice }),
+    })
+
+    let lastErr = null
+
+    for (const model of models) {
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const ctl = new AbortController()
+        const timer = setTimeout(() => ctl.abort(), timeoutMs)
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload(model)),
+            signal: ctl.signal,
+          })
+
+          if (res.status === 429 || res.status >= 500) {
+            // 可重試：限流或對方伺服器問題（DeepInfra fail_fast 容量滿也回 429）
+            lastErr = new Error(`${label} ${res.status} on ${model}`)
+            lastErr.status = res.status
+            if (attempt < maxAttempts) await sleep(backoffBaseMs * 2 ** (attempt - 1))
+            continue
+          }
+          if (res.status === 401 || res.status === 403) {
+            const body = await res.text().catch(() => '')
+            const err = new Error(`${label} ${res.status}（${keyEnv} 被拒，換模型無效）: ${body.slice(0, 160)}`)
+            err.status = res.status
+            err.code = 'DUAL_RAIL_KEY_REJECTED'
+            err.fatal = true
+            throw err
+          }
+          if (!res.ok) {
+            // 不可重試（400/404…）→ 換下一個模型
+            const body = await res.text().catch(() => '')
+            lastErr = new Error(`${label} ${res.status} on ${model}: ${body.slice(0, 160)}`)
+            lastErr.status = res.status
+            break
+          }
+
+          const jsonBody = await res.json()
+          const choice = jsonBody?.choices?.[0]
+          const message = choice?.message ?? null
+          const text = typeof message?.content === 'string' ? message.content : ''
+          const toolCalls = normalizeToolCalls(message)
+          const usage = jsonBody?.usage ?? null
+
+          if (text.length || toolCalls.length) {
+            // 有內容但撞 length＝被截斷：不丟錯，回傳並打 truncated 旗標，由 router／呼叫端決定。
+            // 只有 tool_calls、沒有文字也算有效回覆（finish_reason=tool_calls 不算截斷）。
+            return {
+              text,
+              model: jsonBody?.model || model,
+              provider: id,
+              usage,
+              cachedTokens: cachedTokensOf(usage),
+              toolCalls,
+              message,
+              ...finishFlags(choice?.finish_reason, { hasContent: true, hasReasoning: Boolean(message?.reasoning) }),
+              ...(message?.reasoning ? { reasoning: message.reasoning } : {}),
+            }
+          }
+
+          // ⚠️ 推理模型把思考放在 message.reasoning，content 要等推理結束才填。
+          // maxTokens 太小時回來就是 content:"" + finish_reason:"length" ——
+          // 看起來像模型壞了，其實只是沒錢寫答案。明確辨識，否則整層會靜默失效。
+          if (choice?.finish_reason === 'length' && message?.reasoning) {
+            lastErr = new Error(
+              `${label}: ${model} 的推理耗盡 max_tokens(${maxTokens})，尚未產出答案。` +
+                `推理模型請給更大的 maxTokens（建議 ≥1000），或改用非推理模型。`,
+            )
+            lastErr.code = 'DUAL_RAIL_REASONING_EXHAUSTED'
+            break
+          }
+
+          lastErr = new Error(`${label} returned empty content on ${model}`)
+          break
+        } catch (err) {
+          if (err?.fatal) throw err
+          lastErr = err
+          if (err?.name === 'AbortError') break // 逾時就換模型，不要繼續等
+          if (attempt < maxAttempts) await sleep(backoffBaseMs * 2 ** (attempt - 1))
+        } finally {
+          clearTimeout(timer)
+        }
+      }
+    }
+
+    throw lastErr ?? new Error(`${label}: all models failed`)
+  }
+
+  return { id, label, keyEnv, listModels, tierName, isConfigured, call }
+}
