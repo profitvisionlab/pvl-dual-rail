@@ -33,8 +33,11 @@ export function assertAsciiKey(name, key) {
  *   reasoningExhausted — 推理把 max_tokens 吃光、沒產出答案（要調 maxTokens 或換非推理模型）
  *   truncated          — 有答案但被 max_tokens 切斷（結構化輸出＝整包報廢；散文可能勉強能用）
  * 兩者修法不同，集團在同一個坑踩過四次，所以分開記，不合成一個「失敗」。
+ *
+ * finish_reason=tool_calls（0.3.0）：模型是停下來等工具結果，不是被切斷——兩個旗標都是 false。
  */
 export function finishFlags(finishReason, { hasContent, hasReasoning } = {}) {
+  if (finishReason === 'tool_calls') return { finishReason, reasoningExhausted: false, truncated: false }
   const length = finishReason === 'length' || finishReason === 'max_tokens' || finishReason === 'MAX_TOKENS'
   return {
     finishReason: finishReason ?? null,

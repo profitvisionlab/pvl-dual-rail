@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.3.0 — 2026-09-17
+
+**New providers (FinOps rail):**
+- `src/adapters/deepinfra.mjs` — DeepInfra, OpenAI-compatible
+  (`https://api.deepinfra.com/v1/openai`). Same-model fallback for Together and
+  first choice for long-prefix / translation / structured extraction work.
+- `src/adapters/lightning.mjs` — Lightning AI, OpenAI-compatible aggregator
+  (`https://lightning.ai/api/v1`; taken from the 2026-09-07 model page, not yet
+  verified with a live key). Frontier models behind one key; last-resort fallback.
+- Both follow Together's rules: `*_API_KEY`, `*_BASE_URL`, `*_TIER{1,2,3}_MODELS`
+  (no built-in model lists), `assertAsciiKey`, the C1 result flags, circuit breaker.
+
+**Configurable provider chain:**
+- `DUAL_RAIL_FINOPS_CHAIN` (comma-separated). **Default unchanged:**
+  `together,openrouter`. Providers without a key are skipped and recorded in
+  `attempts` as `{ provider, skipped: 'not-configured', envVar }`; unknown names
+  throw `DUAL_RAIL_BAD_CHAIN`. New error codes `DUAL_RAIL_FINOPS_UNCONFIGURED`
+  and `DUAL_RAIL_FINOPS_EXHAUSTED` (both carry `err.attempts`).
+- New exports: `resolveFinopsChain`, `DEFAULT_FINOPS_CHAIN`,
+  `isDeepInfraConfigured`, `isLightningConfigured`.
+
+**Tool calling (passthrough):**
+- `chatComplete({ tools, toolChoice })` — OpenAI function format, sent as-is by
+  all four OpenAI-compatible adapters. `messages` may contain `role: 'tool'` with
+  `tool_call_id` and assistant messages carrying `tool_calls`.
+- Results gain `toolCalls` (`[{ id, name, arguments }]`, `arguments` always a
+  string) and `message` (the raw assistant message, to append for the next turn).
+- `finish_reason: 'tool_calls'` is never `truncated`; a tool-call-only reply
+  (empty text) no longer triggers the short-reply escalation.
+- Enterprise rail (Vertex) throws `DUAL_RAIL_TOOLS_UNSUPPORTED` for tools,
+  `toolChoice`, or tool messages. It never re-routes to FinOps.
+
+**Other:**
+- Results gain `cachedTokens` (`usage.prompt_tokens_details.cached_tokens`;
+  `null` when the provider does not report it — e.g. Lightning — which is not the
+  same as zero hits).
+- Together now shares one OpenAI-compatible loop (`adapters/openai-compat.mjs`)
+  with DeepInfra and Lightning. Behavior changes: env is read at call time (not
+  at import), `TOGETHER_BASE_URL` accepts a base (`…/v1`) or the full
+  `…/chat/completions` URL, and 401/403 now fail fast with
+  `DUAL_RAIL_KEY_REJECTED` instead of trying every remaining model.
+- Policy gate unchanged: `internalContext: true` / `sensitivity: 'internal'`
+  still never reach FinOps, with any chain and with tools.
+- Smoke suite: 19 → 69 checks, all offline (mock `fetch`, `scripts/checks/`).
+- `package.json` description no longer mentions NVIDIA NIM (retired 2026-09-07).
+
 ## 0.2.0 — 2026-08-20
 
 **Policy fix (behavior change):**

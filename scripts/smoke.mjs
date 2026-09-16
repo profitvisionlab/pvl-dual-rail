@@ -10,6 +10,8 @@
 //   3) sensitivity=published → finops selected by policy
 //   4) explicit rail=enterprise → enterprise mock
 //   5) sensitivity=internal + rail=finops → rejected (explicit rail is not an opt-out)
+//   6) DeepInfra／Lightning adapters, finops chain, tool-call passthrough —
+//      mock fetch only (scripts/checks/*), no network, no real keys
 
 process.env.ENTERPRISE_ADAPTER = process.env.ENTERPRISE_ADAPTER || 'mock'
 
@@ -20,6 +22,8 @@ catch { /* optional */ }
 import { resolveRail, finopsAllowed } from '../src/policy.mjs'
 import { chatComplete, resetCircuitBreakers } from '../src/index.mjs'
 import { assertAsciiKey, finishFlags } from '../src/env.mjs'
+import { runAdapterChecks } from './checks/adapters.mjs'
+import { runChainToolChecks } from './checks/chain-tools.mjs'
 
 const results = []
 function ok(name, cond, detail = '') {
@@ -142,6 +146,12 @@ try {
   const r = await chatComplete({ system: 's', messages: [{ role: 'user', content: 'hi' }], internalContext: true })
   ok('enterprise mock 結果帶三個旗標', 'truncated' in r && 'reasoningExhausted' in r && 'finishReason' in r && r.truncated === false, JSON.stringify({ f: r.finishReason, t: r.truncated, x: r.reasoningExhausted }))
 } catch (e) { ok('enterprise mock 結果帶三個旗標', false, e.message) }
+
+// ── 0.3.0：新 adapter／chain／tools，全部 mock fetch ──
+await runAdapterChecks(ok)
+resetCircuitBreakers()
+await runChainToolChecks(ok)
+resetCircuitBreakers()
 
 const failed = results.filter((r) => !r.pass)
 console.log(`\n${results.length - failed.length}/${results.length} passed`)

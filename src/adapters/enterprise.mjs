@@ -54,6 +54,30 @@ export function isEnterpriseConfigured() {
   return Boolean(process.env.VERTEX_PROJECT_ID && process.env.VERTEX_ACCESS_TOKEN)
 }
 
+/**
+ * 工具呼叫在 enterprise 軌不支援（0.3.0）。
+ *
+ * Vertex generateContent 的工具形狀（functionDeclarations／functionCall／functionResponse）
+ * 與 OpenAI function 格式不同，本 adapter 又把每則訊息攤平成純文字——
+ * 若默默忽略 tools，呼叫端會拿到「模型沒呼叫工具」的正常回覆，錯得看不出來；
+ * 若把 role:'tool' 訊息當 user 文字送出，工具結果會被當成使用者發言。
+ * 兩種都比明確丟錯糟，所以直接丟 DUAL_RAIL_TOOLS_UNSUPPORTED。
+ *
+ * 注意：丟錯**不會**讓呼叫改走 finops —— internal 資料的閘門優先於功能需求。
+ */
+export function assertNoToolsForEnterprise({ tools, toolChoice, messages } = {}) {
+  const hasTools = Array.isArray(tools) ? tools.length > 0 : tools != null
+  const hasToolMessages = (messages || []).some((m) => m?.role === 'tool' || (Array.isArray(m?.tool_calls) && m.tool_calls.length))
+  if (hasTools || toolChoice != null || hasToolMessages) {
+    const err = new Error(
+      'Enterprise rail (Vertex) does not support tool calling in pvl-dual-rail yet — ' +
+        'remove tools/toolChoice/tool messages, or handle the tool loop outside the enterprise rail',
+    )
+    err.code = 'DUAL_RAIL_TOOLS_UNSUPPORTED'
+    throw err
+  }
+}
+
 function systemToText(system) {
   if (system == null) return ''
   if (typeof system === 'string') return system
@@ -89,7 +113,10 @@ export async function callEnterprise({
   messages,
   maxTokens,
   json = false,
+  tools,
+  toolChoice,
 }) {
+  assertNoToolsForEnterprise({ tools, toolChoice, messages })
   if (isEnterpriseMock()) {
     const model = models[0] || 'mock-gemini'
     const preview = String(messages?.[0]?.content || '').slice(0, 80)
@@ -146,6 +173,7 @@ export async function callEnterprise({
         text,
         model,
         usage: data.usageMetadata || null,
+        cachedTokens: Number.isFinite(data.usageMetadata?.cachedContentTokenCount) ? data.usageMetadata.cachedContentTokenCount : null,
         ...finishFlags(data.candidates?.[0]?.finishReason, { hasContent: true, hasReasoning: false }),
         providerSlug: 'vertex-ai',
       }
