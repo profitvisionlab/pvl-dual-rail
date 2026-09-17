@@ -78,6 +78,29 @@ export function chatCompletionsUrl(base) {
 }
 
 /**
+ * 閘道把上游的 4xx 包成 5xx 回來（2026-09-17 Lightning 實測：Google／OpenAI 的 400
+ * 被包成 HTTP 500，body 寫 `status code: 400`）。這種錯重試幾次都一樣，只會燒時間，
+ * 要當不可重試、直接換下一個模型。
+ */
+const WRAPPED_CLIENT_ERROR = /status code:\s*4\d\d|\bBad Request\b|INVALID_ARGUMENT/i
+
+/**
+ * 「這個模型在這條通道上不能用工具」的錯誤特徵（2026-09-17 Lightning 實測）：
+ * · Gemini 3／3.5：閘道沒把 thought_signature 傳回來，回填 tool 結果那一輪必 400
+ * · GPT-5.5：閘道強制帶 reasoning_effort，OpenAI 拒絕 reasoning＋function tools
+ * 命中時丟 DUAL_RAIL_TOOLS_UNSUPPORTED，讓呼叫端知道是「組合不支援」而不是「暫時故障」。
+ */
+const TOOLS_UNSUPPORTED = /thought_signature|Function tools with reasoning_effort|tools? (?:are |is )?not supported|does not support (?:tools|function)/i
+
+function httpError({ label, status, model, body, tools }) {
+  const snippet = String(body || '').replace(/\s+/g, ' ').slice(0, 240)
+  const err = new Error(`${label} ${status} on ${model}${snippet ? `: ${snippet}` : ''}`)
+  err.status = status
+  if (tools && TOOLS_UNSUPPORTED.test(snippet)) err.code = 'DUAL_RAIL_TOOLS_UNSUPPORTED'
+  return err
+}
+
+/**
  * 建立一個 OpenAI 相容 adapter。
  *
  * @param {object} spec
@@ -86,8 +109,10 @@ export function chatCompletionsUrl(base) {
  * @param {string} spec.envPrefix    - env 前綴（TOGETHER → TOGETHER_API_KEY、TOGETHER_TIER1_MODELS…）
  * @param {string} spec.defaultBaseUrl
  * @param {string} [spec.docHint]    - 模型清單未設定時，錯誤訊息指向哪份說明
+ * @param {(model: string) => string} [spec.maxTokensField]
+ *   - 上限欄位名。預設 max_tokens；OpenAI 推理世代（gpt-5／gpt-6／o 系列）只收 max_completion_tokens
  */
-export function createOpenAICompatAdapter({ id, label, envPrefix, defaultBaseUrl, docHint }) {
+export function createOpenAICompatAdapter({ id, label, envPrefix, defaultBaseUrl, docHint, maxTokensField = () => 'max_tokens' }) {
   const keyEnv = `${envPrefix}_API_KEY`
   const tierEnv = (tier) => `${envPrefix}_TIER${tier}_MODELS`
 
@@ -127,7 +152,7 @@ export function createOpenAICompatAdapter({ id, label, envPrefix, defaultBaseUrl
     const payload = (model) => ({
       model,
       messages: [...(sys != null ? [{ role: 'system', content: sys }] : []), ...(messages || [])],
-      max_tokens: maxTokens,
+      [maxTokensField(model)]: maxTokens,
       ...(json ? { response_format: { type: 'json_object' } } : {}),
       ...toolFields({ tools, toolChoice }),
     })
@@ -147,9 +172,12 @@ export function createOpenAICompatAdapter({ id, label, envPrefix, defaultBaseUrl
           })
 
           if (res.status === 429 || res.status >= 500) {
-            // 可重試：限流或對方伺服器問題（DeepInfra fail_fast 容量滿也回 429）
-            lastErr = new Error(`${label} ${res.status} on ${model}`)
-            lastErr.status = res.status
+            // 可重試：限流或對方伺服器問題（DeepInfra fail_fast 容量滿也回 429）。
+            // body 一定要帶進錯誤訊息——只寫「500 on model」時，模型不支援、閘道故障、
+            // 參數錯三種完全不同的原因看起來一模一樣（2026-09-17 實測踩到）。
+            const body = await res.text().catch(() => '')
+            lastErr = httpError({ label, status: res.status, model, body, tools })
+            if (lastErr.code === 'DUAL_RAIL_TOOLS_UNSUPPORTED' || WRAPPED_CLIENT_ERROR.test(body)) break
             if (attempt < maxAttempts) await sleep(backoffBaseMs * 2 ** (attempt - 1))
             continue
           }
@@ -164,8 +192,7 @@ export function createOpenAICompatAdapter({ id, label, envPrefix, defaultBaseUrl
           if (!res.ok) {
             // 不可重試（400/404…）→ 換下一個模型
             const body = await res.text().catch(() => '')
-            lastErr = new Error(`${label} ${res.status} on ${model}: ${body.slice(0, 160)}`)
-            lastErr.status = res.status
+            lastErr = httpError({ label, status: res.status, model, body, tools })
             break
           }
 
