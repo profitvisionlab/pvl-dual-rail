@@ -42,6 +42,12 @@ import {
   isLightningConfigured,
 } from './adapters/lightning.mjs'
 import {
+  callOpenAI,
+  listOpenAIModels,
+  openAITierName,
+  isOpenAIConfigured,
+} from './adapters/openai.mjs'
+import {
   callOpenRouter,
   listFinopsModels,
   finopsTierName,
@@ -65,6 +71,7 @@ export {
   isTogetherConfigured,
   isDeepInfraConfigured,
   isLightningConfigured,
+  isOpenAIConfigured,
   isFinopsConfigured,
   isEnterpriseConfigured,
   isEnterpriseMock,
@@ -95,6 +102,13 @@ const FINOPS_PROVIDERS = {
     listModels: listLightningModels,
     tierNameOf: lightningTierName,
     call: callLightning,
+  },
+  openai: {
+    envVar: 'OPENAI_API_KEY',
+    configured: isOpenAIConfigured,
+    listModels: listOpenAIModels,
+    tierNameOf: openAITierName,
+    call: callOpenAI,
   },
   openrouter: {
     envVar: 'OPENROUTER_API_KEY',

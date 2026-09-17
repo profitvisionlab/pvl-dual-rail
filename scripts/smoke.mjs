@@ -24,6 +24,7 @@ import { chatComplete, resetCircuitBreakers } from '../src/index.mjs'
 import { assertAsciiKey, finishFlags } from '../src/env.mjs'
 import { runAdapterChecks } from './checks/adapters.mjs'
 import { runChainToolChecks } from './checks/chain-tools.mjs'
+import { runResponsesChecks } from './checks/responses.mjs'
 
 const results = []
 function ok(name, cond, detail = '') {
@@ -151,6 +152,7 @@ try {
 await runAdapterChecks(ok)
 resetCircuitBreakers()
 await runChainToolChecks(ok)
+await runResponsesChecks(ok)
 resetCircuitBreakers()
 
 const failed = results.filter((r) => !r.pass)

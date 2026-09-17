@@ -27,7 +27,8 @@ Brand: **PVL.AI**. GitHub: [`profitvisionlab/pvl-dual-rail`](https://github.com/
 |---|---|---|
 | `together` | 主力 | `https://api.together.xyz/v1` |
 | `deepinfra` | 同款模型備援（有同一顆 DeepSeek-V4-Flash）；長前綴／翻譯／結構化抽取首選，回報 `cachedTokens` | `https://api.deepinfra.com/v1/openai` |
-| `lightning` | 聚合器：Anthropic／OpenAI／Google 一把金鑰；**最後備援**（降級到這裡＝換模型，品質基準會變） | `https://lightning.ai/api/v1`（2026-09-17 真金鑰實打驗證：`/models` 與 `/chat/completions` 皆通） |
+| `lightning` | 聚合器：Anthropic／OpenAI／Google 一把金鑰；**最後備援**（降級到這裡＝換模型，品質基準會變）。OpenAI 推理模型帶工具時自動走 `/responses`（0.4.0） | `https://lightning.ai/api/v1`（2026-09-17 真金鑰實打驗證：`/models`、`/chat/completions`、`/responses` 皆通） |
+| `openai` | OpenAI 直連（0.4.0）。**一律走 `/responses`**；GPT-6 帶工具只能走這裡；有 prompt 快取 | `https://api.openai.com/v1` |
 | `openrouter` | 舊備援（集團目前沒有可用金鑰） | `https://openrouter.ai/api/v1`（固定） |
 
 - **沒設金鑰的供應商自動跳過**，記在結果的 `attempts`（`{ provider, skipped: 'not-configured', envVar }`）與 `skippedProviders`，**不算降級**。
@@ -114,14 +115,26 @@ if (r.toolCalls.length) {
 | DeepInfra | `moonshotai/Kimi-K3` | ✅ | ✅ | |
 | Lightning | `google/gemini-2.5-flash`、`openai/gpt-4.1` | ✅ | ✅ | |
 | Lightning | `google/gemini-3-flash-preview`、`google/gemini-3.5-flash` | ✅ | ❌ | 閘道沒把 `thought_signature` 傳回來，回填那輪必 400；Google 文件的替代簽章也沒被轉送 |
-| Lightning | `openai/gpt-5.5-2026-04-23` | ❌ | — | 閘道強制帶 `reasoning_effort`，OpenAI 拒絕 reasoning＋function tools；`reasoning_effort: none` 也一樣。**不帶工具可用** |
+| Lightning `/chat/completions` | `openai/gpt-5.5`、`openai/gpt-5.6-*`、`openai/gpt-6-astra` | ❌ | — | OpenAI 拒絕「推理＋function tools」；`reasoning_effort: none` 也一樣。**0.4.0 起帶工具時自動改走 `/responses`** |
+| Lightning `/responses`（0.4.0 自動） | `openai/gpt-5.5`、`openai/gpt-5.6-luna／terra／sol` | ✅ | ✅ | 經 `chatComplete` 實測來回成功，結果帶 `api: 'responses'` |
+| Lightning `/responses` | `openai/gpt-6-astra` | ❌ | — | 閘道回「does not support the Responses API」→ `DUAL_RAIL_TOOLS_UNSUPPORTED`，不重試、換下一個 |
+| OpenAI 直連 `/responses`（0.4.0） | `gpt-5.6-luna／terra／sol`、`gpt-6-astra` | ✅ | ✅ | 經 `chatComplete` 實測來回成功；`json: true` 也實測可用 |
 | Lightning | `anthropic/*`（Sonnet 5、Opus 5、Fable 5、Haiku 4.5） | 未測 | 未測 | 當日整家 503，連純文字也回 503 |
 
 後兩列會丟 `DUAL_RAIL_TOOLS_UNSUPPORTED`（不重試、直接換下一個模型），同一層或 chain 後面有能用的模型就會自動接手；
 實測 `LIGHTNING_TIER1_MODELS=google/gemini-3-flash-preview,google/gemini-2.5-flash` 與
 `DUAL_RAIL_FINOPS_CHAIN=lightning,deepinfra` 兩種配法都能完成來回。
 
-**結論**：要用工具的前沿模型目前不要經 Lightning。工具迴圈的主力放 DeepInfra；Lightning 留給不帶工具的呼叫（例如 advisor 只回策略文字）。
+**結論（0.4.0 更新）**：OpenAI 推理模型經 Lightning 或 OpenAI 直連都能帶工具，adapter 自動改走 `/responses`，呼叫端不用改。GPT-6 帶工具只能走 `openai` 直連。Gemini 3／3.5 經 Lightning 仍不能完成工具來回。
+
+### Responses 寫法怎麼運作（0.4.0）
+
+- **什麼時候走 `/responses`**：`openai` 直連一律走；`lightning` 只在「模型名是 `openai/gpt-5*`、`gpt-6*`、`o*` 且帶了 `tools`」時走，不帶工具維持 chat。`LIGHTNING_RESPONSES=never` 可整個關掉。
+- **呼叫端不用改**：輸入仍是 chat 形狀的 `messages`／`tools`／`toolChoice`，輸出仍是 `text`／`toolCalls`／`message`；`message` 是標準 chat 形狀，下一輪直接 push 回去。結果多一個 `api` 欄位（`chat` 或 `responses`）。
+- **回填不帶推理項目**：`store: false`，只送 `function_call`＋`function_call_output`；實測 GPT-5.6 與 GPT-6 都能完成來回。
+- **JSON 模式**：OpenAI 規定 `input` 訊息裡要出現 json 字樣，寫在 `instructions` 不算。所以 `json: true` 時系統提示改成 developer 訊息放進 `input`，全文沒有 json 字樣時再補一句要求。
+- **usage**：轉成 chat 形狀（`prompt_tokens`、`prompt_tokens_details.cached_tokens`），原始 Responses usage 放在 `usage.responses`，拿得到 `reasoning_tokens`。
+- 推理吃光 `max_output_tokens` 丟 `DUAL_RAIL_REASONING_EXHAUSTED`；有文字但未完成標 `truncated`，與 chat 路徑一致。
 
 ### 工具迴圈要關掉「回覆太短就升階」
 
@@ -137,7 +150,7 @@ if (r.toolCalls.length) {
 
 ```bash
 npm test
-# → 81/81 passed (offline: enterprise uses mock, FinOps adapters use mock fetch; no keys required)
+# → 117/117 passed (offline: enterprise uses mock, FinOps adapters use mock fetch; no keys required)
 ```
 
 ## Install / use
@@ -195,7 +208,7 @@ Full list in [`.env.example`](./.env.example). FinOps essentials:
 
 | 變數 | 用途 | 預設 |
 |---|---|---|
-| `DUAL_RAIL_FINOPS_CHAIN` | 供應商順序（`together`／`deepinfra`／`lightning`／`openrouter`） | `together,openrouter` |
+| `DUAL_RAIL_FINOPS_CHAIN` | 供應商順序（`together`／`deepinfra`／`lightning`／`openai`／`openrouter`） | `together,openrouter` |
 | `TOGETHER_API_KEY` | Together 金鑰 | — |
 | `TOGETHER_TIER{1,2,3}_MODELS` | 各層模型（逗號分隔 fallback 鏈） | 無，必填 |
 | `TOGETHER_BASE_URL` | 端點（base 或完整 `/chat/completions` 皆可） | `https://api.together.xyz/v1` |
@@ -205,11 +218,15 @@ Full list in [`.env.example`](./.env.example). FinOps essentials:
 | `LIGHTNING_API_KEY` | Lightning AI 金鑰 | — |
 | `LIGHTNING_TIER{1,2,3}_MODELS` | 各層模型 | 無，必填 |
 | `LIGHTNING_BASE_URL` | 端點（2026-09-17 已實打驗證） | `https://lightning.ai/api/v1` |
-| `{TOGETHER,DEEPINFRA,LIGHTNING}_MAX_ATTEMPTS`／`_BACKOFF_BASE_MS`／`_TIMEOUT_MS` | 每模型重試次數／退避基數／逾時 | `3`／`100`／`45000` |
+| `LIGHTNING_RESPONSES` | 設 `never` 則 OpenAI 推理模型帶工具也不改走 `/responses` | 未設＝自動 |
+| `OPENAI_API_KEY` | OpenAI 直連金鑰（0.4.0） | — |
+| `OPENAI_TIER{1,2,3}_MODELS` | 各層模型，不帶 `openai/` 前綴（例如 `gpt-5.6-luna`） | 無，必填 |
+| `OPENAI_BASE_URL` | 端點 | `https://api.openai.com/v1` |
+| `{TOGETHER,DEEPINFRA,LIGHTNING,OPENAI}_MAX_ATTEMPTS`／`_BACKOFF_BASE_MS`／`_TIMEOUT_MS` | 每模型重試次數／退避基數／逾時 | `3`／`100`／`45000` |
 | `OPENROUTER_API_KEY`、`OPENROUTER_TIER{1,2,3}_MODELS` | OpenRouter | 見 `.env.example` |
 | `DUAL_RAIL_FORCE_TIER` | 把 finops 釘在某層——**預設就該是沒有設定** | — |
 
-Together／DeepInfra／Lightning 的設定在**呼叫當下**讀取（不是 import 時），改 env 不必重新載入模組。
+Together／DeepInfra／Lightning／OpenAI 的設定在**呼叫當下**讀取（不是 import 時），改 env 不必重新載入模組。
 
 ## What this repo is / isn’t
 
