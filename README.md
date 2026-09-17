@@ -27,7 +27,7 @@ Brand: **PVL.AI**. GitHub: [`profitvisionlab/pvl-dual-rail`](https://github.com/
 |---|---|---|
 | `together` | 主力 | `https://api.together.xyz/v1` |
 | `deepinfra` | 同款模型備援（有同一顆 DeepSeek-V4-Flash）；長前綴／翻譯／結構化抽取首選，回報 `cachedTokens` | `https://api.deepinfra.com/v1/openai` |
-| `lightning` | 聚合器：Anthropic／OpenAI／Google 一把金鑰；**最後備援**（降級到這裡＝換模型，品質基準會變） | `https://lightning.ai/api/v1` ⚠️ 取自模型頁範例，尚未以真實金鑰實打驗證 |
+| `lightning` | 聚合器：Anthropic／OpenAI／Google 一把金鑰；**最後備援**（降級到這裡＝換模型，品質基準會變） | `https://lightning.ai/api/v1`（2026-09-17 真金鑰實打驗證：`/models` 與 `/chat/completions` 皆通） |
 | `openrouter` | 舊備援（集團目前沒有可用金鑰） | `https://openrouter.ai/api/v1`（固定） |
 
 - **沒設金鑰的供應商自動跳過**，記在結果的 `attempts`（`{ provider, skipped: 'not-configured', envVar }`）與 `skippedProviders`，**不算降級**。
@@ -103,6 +103,32 @@ if (r.toolCalls.length) {
 而本 adapter 把訊息攤平成文字——默默忽略會變成「模型沒呼叫工具」的假正常。
 **這個錯誤不會讓呼叫改走 FinOps**：`internalContext` 的閘門優先於功能需求。
 
+### 真金鑰實測：模型×通道的工具支援（2026-09-17）
+
+測法：一個 `get_store_hours` 工具，模型先要求呼叫（第一輪），回填結果後產出最終回答（第二輪）。
+
+| 通道 | 模型 | 第一輪 | 第二輪（回填） | 備註 |
+|---|---|---|---|---|
+| DeepInfra | `deepseek-ai/DeepSeek-V4-Flash` | ✅ | ✅ | `finish_reason: tool_calls`，有報 `cached_tokens` |
+| DeepInfra | `Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo` | ✅ | ✅ | 最快，單輪約 0.4 秒 |
+| DeepInfra | `moonshotai/Kimi-K3` | ✅ | ✅ | |
+| Lightning | `google/gemini-2.5-flash`、`openai/gpt-4.1` | ✅ | ✅ | |
+| Lightning | `google/gemini-3-flash-preview`、`google/gemini-3.5-flash` | ✅ | ❌ | 閘道沒把 `thought_signature` 傳回來，回填那輪必 400；Google 文件的替代簽章也沒被轉送 |
+| Lightning | `openai/gpt-5.5-2026-04-23` | ❌ | — | 閘道強制帶 `reasoning_effort`，OpenAI 拒絕 reasoning＋function tools；`reasoning_effort: none` 也一樣。**不帶工具可用** |
+| Lightning | `anthropic/*`（Sonnet 5、Opus 5、Fable 5、Haiku 4.5） | 未測 | 未測 | 當日整家 503，連純文字也回 503 |
+
+後兩列會丟 `DUAL_RAIL_TOOLS_UNSUPPORTED`（不重試、直接換下一個模型），同一層或 chain 後面有能用的模型就會自動接手；
+實測 `LIGHTNING_TIER1_MODELS=google/gemini-3-flash-preview,google/gemini-2.5-flash` 與
+`DUAL_RAIL_FINOPS_CHAIN=lightning,deepinfra` 兩種配法都能完成來回。
+
+**結論**：要用工具的前沿模型目前不要經 Lightning。工具迴圈的主力放 DeepInfra；Lightning 留給不帶工具的呼叫（例如 advisor 只回策略文字）。
+
+### 工具迴圈要關掉「回覆太短就升階」
+
+路由器把少於 `OPENROUTER_MIN_REPLY_CHARS`（預設 40 字元）的回覆當失敗並升一層。工具回填後的最終答案常常很短，
+中文一句話就不到 40 字元，實測會從指定的 tier1 一路升到 tier3，多付兩次呼叫。
+工具迴圈的呼叫請帶 `escalate: false`，或把該 env 調低。這是 0.3.0 之前就有的行為，本版未改預設以免影響既有呼叫端。
+
 ## Hard rule (verifiable)
 
 `internalContext: true` **never** calls FinOps — and neither does
@@ -111,7 +137,7 @@ if (r.toolCalls.length) {
 
 ```bash
 npm test
-# → 69/69 passed (offline: enterprise uses mock, FinOps adapters use mock fetch; no keys required)
+# → 78/78 passed (offline: enterprise uses mock, FinOps adapters use mock fetch; no keys required)
 ```
 
 ## Install / use
@@ -178,7 +204,7 @@ Full list in [`.env.example`](./.env.example). FinOps essentials:
 | `DEEPINFRA_BASE_URL` | 端點 | `https://api.deepinfra.com/v1/openai` |
 | `LIGHTNING_API_KEY` | Lightning AI 金鑰 | — |
 | `LIGHTNING_TIER{1,2,3}_MODELS` | 各層模型 | 無，必填 |
-| `LIGHTNING_BASE_URL` | 端點（⚠️ 預設值未實打驗證） | `https://lightning.ai/api/v1` |
+| `LIGHTNING_BASE_URL` | 端點（2026-09-17 已實打驗證） | `https://lightning.ai/api/v1` |
 | `{TOGETHER,DEEPINFRA,LIGHTNING}_MAX_ATTEMPTS`／`_BACKOFF_BASE_MS`／`_TIMEOUT_MS` | 每模型重試次數／退避基數／逾時 | `3`／`100`／`45000` |
 | `OPENROUTER_API_KEY`、`OPENROUTER_TIER{1,2,3}_MODELS` | OpenRouter | 見 `.env.example` |
 | `DUAL_RAIL_FORCE_TIER` | 把 finops 釘在某層——**預設就該是沒有設定** | — |
