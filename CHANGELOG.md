@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 — 2026-09-17
+
+**Fix:** DeepInfra puts reasoning in `message.reasoning_content`, not `message.reasoning`.
+Reasoning models that spent the whole `max_tokens` budget thinking (seen on
+Qwen3.5-397B during the ui-i18n benchmark) were reported as
+"returned empty content" instead of `DUAL_RAIL_REASONING_EXHAUSTED`, so callers
+could not tell "raise maxTokens / turn thinking off" from a provider failure.
+New helper `reasoningOf(message)` reads either field; used by the OpenAI-compatible
+adapters and OpenRouter. `result.reasoning` is now populated for DeepInfra too.
+
 ## 0.3.0 — 2026-09-17
 
 **Live-key verification (2026-09-17)** — see README「真金鑰實測」:

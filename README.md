@@ -137,7 +137,7 @@ if (r.toolCalls.length) {
 
 ```bash
 npm test
-# → 78/78 passed (offline: enterprise uses mock, FinOps adapters use mock fetch; no keys required)
+# → 81/81 passed (offline: enterprise uses mock, FinOps adapters use mock fetch; no keys required)
 ```
 
 ## Install / use

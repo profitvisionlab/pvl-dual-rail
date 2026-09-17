@@ -82,6 +82,30 @@ export async function runAdapterChecks(ok) {
     usageOk: { prompt_tokens: 30, completion_tokens: 5, prompt_tokens_details: null }, cachedOk: null,
   })
   await gatewayChecks(ok)
+  await reasoningFieldChecks(ok)
+}
+
+// DeepInfra 的推理欄位叫 reasoning_content（2026-09-17 Qwen3.5-397B 跑分時實際回應）
+async function reasoningFieldChecks(ok) {
+  const exhausted = { choices: [{ message: { role: 'assistant', content: '', reasoning_content: 'thinking '.repeat(50) }, finish_reason: 'length' }], usage: { prompt_tokens: 43, completion_tokens: 2000 } }
+  {
+    const { error } = await withEnv({ DEEPINFRA_API_KEY: 'sk-test_123' }, () =>
+      withFetch(() => ({ body: exhausted }), () => callDeepInfra({ models: ['Qwen/Qwen3.5-397B-A17B'], messages: MSG, maxTokens: 2000 })))
+    ok('deepinfra: reasoning_content 吃光額度 → DUAL_RAIL_REASONING_EXHAUSTED（不是「空內容」）',
+      error?.code === 'DUAL_RAIL_REASONING_EXHAUSTED', `code=${error?.code} msg=${error?.message}`)
+  }
+  {
+    const body = { choices: [{ message: { role: 'assistant', content: 'カートに入れる', reasoning_content: 'short thought' }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5 } }
+    const { result } = await withEnv({ DEEPINFRA_API_KEY: 'sk-test_123' }, () =>
+      withFetch(() => ({ body }), () => callDeepInfra({ models: ['m'], messages: MSG, maxTokens: 64 })))
+    ok('deepinfra: reasoning_content 帶到 result.reasoning', result?.reasoning === 'short thought' && result?.text === 'カートに入れる', JSON.stringify(result?.reasoning))
+  }
+  {
+    const body = { choices: [{ message: { role: 'assistant', content: 'ok', reasoning: 'r' }, finish_reason: 'stop' }] }
+    const { result } = await withEnv({ LIGHTNING_API_KEY: 'sk-test_123' }, () =>
+      withFetch(() => ({ body }), () => callLightning({ models: ['m'], messages: MSG, maxTokens: 64 })))
+    ok('lightning: 既有 reasoning 欄位照舊', result?.reasoning === 'r', JSON.stringify(result?.reasoning))
+  }
 }
 
 // 2026-09-17 真金鑰實測踩到的閘道行為，固化成離線測試。
