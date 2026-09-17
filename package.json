@@ -1,6 +1,6 @@
 {
   "name": "pvl-dual-rail",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Dual-rail LLM router: FinOps (configurable provider chain — Together primary, DeepInfra / Lightning AI / OpenRouter; tool-call passthrough) × Enterprise (Vertex Gemini). Same Tri-Tier brain; internal data never leaves on FinOps.",
   "type": "module",
   "license": "MIT",

@@ -61,6 +61,16 @@ export function normalizeToolCalls(message) {
 }
 
 /**
+ * 推理內容的欄位名各家不同：OpenRouter／Together 用 `reasoning`，
+ * DeepInfra（Qwen3.5、Kimi-K3 等）用 `reasoning_content`。
+ * 只認一種時，DeepInfra 的推理耗盡會被誤報成「空內容」——2026-09-17 跑分時踩到。
+ */
+export function reasoningOf(message) {
+  const r = message?.reasoning ?? message?.reasoning_content
+  return typeof r === 'string' && r.length ? r : null
+}
+
+/**
  * usage 裡的快取命中 token 數。DeepInfra／OpenAI 放在 prompt_tokens_details.cached_tokens；
  * Lightning 的 prompt_tokens_details 可能是 null，usage 本身也可能是 null——都回 null，不丟錯。
  * null 的意思是「供應商沒報」，不是「零命中」，兩者在成本分析上要分開看。
@@ -214,15 +224,15 @@ export function createOpenAICompatAdapter({ id, label, envPrefix, defaultBaseUrl
               cachedTokens: cachedTokensOf(usage),
               toolCalls,
               message,
-              ...finishFlags(choice?.finish_reason, { hasContent: true, hasReasoning: Boolean(message?.reasoning) }),
-              ...(message?.reasoning ? { reasoning: message.reasoning } : {}),
+              ...finishFlags(choice?.finish_reason, { hasContent: true, hasReasoning: Boolean(reasoningOf(message)) }),
+              ...(reasoningOf(message) ? { reasoning: reasoningOf(message) } : {}),
             }
           }
 
           // ⚠️ 推理模型把思考放在 message.reasoning，content 要等推理結束才填。
           // maxTokens 太小時回來就是 content:"" + finish_reason:"length" ——
           // 看起來像模型壞了，其實只是沒錢寫答案。明確辨識，否則整層會靜默失效。
-          if (choice?.finish_reason === 'length' && message?.reasoning) {
+          if (choice?.finish_reason === 'length' && reasoningOf(message)) {
             lastErr = new Error(
               `${label}: ${model} 的推理耗盡 max_tokens(${maxTokens})，尚未產出答案。` +
                 `推理模型請給更大的 maxTokens（建議 ≥1000），或改用非推理模型。`,

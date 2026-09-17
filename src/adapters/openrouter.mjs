@@ -2,7 +2,7 @@
 // Must never receive internalContext payloads (enforced by policy before call).
 
 import { envList, envInt, assertAsciiKey, finishFlags } from '../env.mjs'
-import { toolFields, normalizeToolCalls, cachedTokensOf } from './openai-compat.mjs'
+import { toolFields, normalizeToolCalls, cachedTokensOf, reasoningOf } from './openai-compat.mjs'
 
 const PROVIDER_ORDER_REALTIME = envList(
   'OPENROUTER_PROVIDER_ORDER',
@@ -161,7 +161,7 @@ export async function callOpenRouter({
         providerSlug: data.provider || null,
         toolCalls,
         message: choice?.message ?? null,
-        ...finishFlags(choice?.finish_reason, { hasContent: text.length > 0 || toolCalls.length > 0, hasReasoning: Boolean(choice?.message?.reasoning) }),
+        ...finishFlags(choice?.finish_reason, { hasContent: text.length > 0 || toolCalls.length > 0, hasReasoning: Boolean(reasoningOf(choice?.message)) }),
       }
     } catch (e) {
       lastErr = e
