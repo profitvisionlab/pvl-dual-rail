@@ -81,4 +81,66 @@ export async function runAdapterChecks(ok) {
     overrideBase: 'https://lightning.example/api/v1/chat/completions', overrideUrl: 'https://lightning.example/api/v1/chat/completions',
     usageOk: { prompt_tokens: 30, completion_tokens: 5, prompt_tokens_details: null }, cachedOk: null,
   })
+  await gatewayChecks(ok)
+}
+
+// 2026-09-17 真金鑰實測踩到的閘道行為，固化成離線測試。
+const TOOLS = [{ type: 'function', function: { name: 'get_store_hours', parameters: { type: 'object', properties: {} } } }]
+const LIGHT = { LIGHTNING_API_KEY: 'sk-test_123', LIGHTNING_MAX_ATTEMPTS: '3' }
+
+async function gatewayChecks(ok) {
+  // OpenAI 推理世代走 max_completion_tokens，其他模型維持 max_tokens
+  {
+    const { calls } = await withEnv(LIGHT, () =>
+      withFetch(() => ({ body: completion() }), async () => {
+        await callLightning({ models: ['openai/gpt-5.5-2026-04-23'], messages: MSG, maxTokens: 64 })
+        await callLightning({ models: ['openai/gpt-4.1'], messages: MSG, maxTokens: 64 })
+        await callLightning({ models: ['google/gemini-2.5-flash'], messages: MSG, maxTokens: 64 })
+      }))
+    const [gpt5, gpt41, gem] = calls.map((c) => c.body)
+    ok('lightning: gpt-5.5 送 max_completion_tokens、不送 max_tokens',
+      gpt5?.max_completion_tokens === 64 && !('max_tokens' in gpt5), JSON.stringify(gpt5))
+    ok('lightning: gpt-4.1／gemini 維持 max_tokens',
+      gpt41?.max_tokens === 64 && gem?.max_tokens === 64 && !('max_completion_tokens' in gpt41), JSON.stringify([gpt41, gem]))
+  }
+  // DeepInfra 不受影響
+  {
+    const { calls } = await withEnv({ DEEPINFRA_API_KEY: 'sk-test_123' }, () =>
+      withFetch(() => ({ body: completion() }), () => callDeepInfra({ models: ['openai/gpt-5-like'], messages: MSG, maxTokens: 64 })))
+    ok('deepinfra: 一律 max_tokens', calls[0]?.body?.max_tokens === 64, JSON.stringify(calls[0]?.body))
+  }
+  // 閘道把上游 400 包成 500：不重試、換下一個模型、錯誤訊息帶 body
+  {
+    const body = 'error, status code: 400, status: 400 Bad Request, message: something upstream rejected'
+    const { calls, result, error } = await withEnv(LIGHT, () =>
+      withFetch((c) => (c.body.model === 'bad' ? { status: 500, body } : { body: completion({ content: 'fine' }) }),
+        () => callLightning({ models: ['bad', 'good'], messages: MSG, maxTokens: 8 })))
+    const badCalls = calls.filter((c) => c.body.model === 'bad').length
+    ok('lightning: 包裝過的上游 400 不重試（bad 只打 1 次）並換到下一個模型',
+      badCalls === 1 && result?.text === 'fine', `bad=${badCalls} err=${error?.message}`)
+  }
+  // 真正的 5xx 仍重試，且訊息帶 body
+  {
+    const { calls, error } = await withEnv(LIGHT, () =>
+      withFetch(() => ({ status: 503, body: 'The model is temporarily unavailable.' }),
+        () => callLightning({ models: ['anthropic/claude-sonnet-5'], messages: MSG, maxTokens: 8 })))
+    ok('lightning: 503 仍依 MAX_ATTEMPTS 重試 3 次', calls.length === 3, `calls=${calls.length}`)
+    ok('lightning: 錯誤訊息帶出上游原因', /temporarily unavailable/.test(error?.message || ''), error?.message)
+  }
+  // 模型×通道不支援工具：Gemini thought_signature 與 GPT-5.5 reasoning+tools
+  for (const [label, body] of [
+    ['gemini thought_signature', 'status code: 400 ... function call `get_store_hours` in the 2. content block is missing a `thought_signature`'],
+    ['gpt-5.5 reasoning+tools', 'status code: 400 ... Function tools with reasoning_effort are not supported for gpt-5.5-2026-04-23'],
+  ]) {
+    const { calls, error } = await withEnv(LIGHT, () =>
+      withFetch(() => ({ status: 500, body }), () => callLightning({ models: ['m'], messages: MSG, maxTokens: 8, tools: TOOLS })))
+    ok(`lightning: ${label} → DUAL_RAIL_TOOLS_UNSUPPORTED、不重試`,
+      error?.code === 'DUAL_RAIL_TOOLS_UNSUPPORTED' && calls.length === 1, `code=${error?.code} calls=${calls.length}`)
+  }
+  // 沒帶工具時同樣字樣不標成工具不支援
+  {
+    const { error } = await withEnv(LIGHT, () =>
+      withFetch(() => ({ status: 400, body: 'missing a `thought_signature`' }), () => callLightning({ models: ['m'], messages: MSG, maxTokens: 8 })))
+    ok('lightning: 無 tools 時不標 DUAL_RAIL_TOOLS_UNSUPPORTED', error && error.code !== 'DUAL_RAIL_TOOLS_UNSUPPORTED', `code=${error?.code}`)
+  }
 }

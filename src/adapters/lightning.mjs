@@ -22,6 +22,8 @@ const adapter = createOpenAICompatAdapter({
   envPrefix: 'LIGHTNING',
   defaultBaseUrl: 'https://lightning.ai/api/v1',
   docHint: 'adapters/together.mjs 檔頭',
+  // 2026-09-17 實測：openai/gpt-5.5 帶 max_tokens 回 500「please use MaxCompletionTokens」
+  maxTokensField: (model) => (/^openai\/(?:gpt-[56]|o\d)/.test(model) ? 'max_completion_tokens' : 'max_tokens'),
 })
 
 export const listLightningModels = adapter.listModels

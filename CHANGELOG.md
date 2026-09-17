@@ -2,13 +2,25 @@
 
 ## 0.3.0 — 2026-09-17
 
+**Live-key verification (2026-09-17)** — see README「真金鑰實測」:
+- DeepInfra tool round trips pass on DeepSeek-V4-Flash, Qwen3-Coder-480B Turbo, Kimi-K3.
+- Lightning: gemini-2.5-flash and gpt-4.1 pass; Gemini 3／3.5 fail on the tool-result
+  turn (gateway drops `thought_signature`); gpt-5.5 rejects tools (gateway forces
+  `reasoning_effort`); all Anthropic models returned 503 that day.
+- 5xx bodies are now included in error messages. Gateway-wrapped upstream 4xx
+  (`status code: 4xx` inside a 500) is no longer retried. Known model×gateway tool
+  incompatibilities raise `DUAL_RAIL_TOOLS_UNSUPPORTED` without retry, so the next
+  model or provider takes over.
+
 **New providers (FinOps rail):**
 - `src/adapters/deepinfra.mjs` — DeepInfra, OpenAI-compatible
   (`https://api.deepinfra.com/v1/openai`). Same-model fallback for Together and
   first choice for long-prefix / translation / structured extraction work.
 - `src/adapters/lightning.mjs` — Lightning AI, OpenAI-compatible aggregator
-  (`https://lightning.ai/api/v1`; taken from the 2026-09-07 model page, not yet
-  verified with a live key). Frontier models behind one key; last-resort fallback.
+  (`https://lightning.ai/api/v1`; verified with a live key on 2026-09-17).
+  Frontier models behind one key; last-resort fallback. OpenAI reasoning-generation
+  models (`openai/gpt-5*`, `gpt-6*`, `o*`) are sent `max_completion_tokens` instead
+  of `max_tokens` (the gateway 500s otherwise).
 - Both follow Together's rules: `*_API_KEY`, `*_BASE_URL`, `*_TIER{1,2,3}_MODELS`
   (no built-in model lists), `assertAsciiKey`, the C1 result flags, circuit breaker.
 
