@@ -154,6 +154,8 @@ export async function runTier({
         // null＝供應商沒報快取欄位，不是零命中
         cachedTokens: Number.isFinite(result.cachedTokens) ? result.cachedTokens : null,
         providerSlug: result.providerSlug || null,
+        // 0.4.0：這次走的是 chat 還是 responses（OpenAI 推理模型帶工具時會自動走 responses）
+        api: result.api ?? null,
         // 工具呼叫（0.3.0）：toolCalls 已正規化；message 是原始 assistant 訊息，供呼叫端原樣回填
         toolCalls,
         message: result.message ?? { role: 'assistant', content: result.text },

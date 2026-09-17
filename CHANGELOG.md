@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.4.0 — 2026-09-17
+
+**OpenAI Responses API — lets OpenAI reasoning models use tools.**
+OpenAI's reasoning generation (gpt-5.5, gpt-5.6 luna/terra/sol, gpt-6-astra) rejects
+"reasoning + function tools" on `/chat/completions` (both OpenAI direct and Lightning:
+"Function tools with reasoning_effort are not supported … use /v1/responses").
+
+- New `src/adapters/responses.mjs`: chat-shaped `messages`/`tools`/`toolChoice` →
+  Responses `input`/`instructions`/`tools`, and back to the usual result
+  (`text`, `toolCalls`, chat-shaped `message`, chat-shaped `usage` with the raw
+  Responses usage under `usage.responses`). `store: false`; tool results are sent
+  back as `function_call` + `function_call_output` without reasoning items
+  (verified live on gpt-5.6-luna and gpt-6-astra).
+- `json: true` on Responses moves the system prompt into a developer input
+  message and adds a JSON reminder when needed — OpenAI only accepts the word
+  "json" inside `input`, not `instructions` (verified live: 400 otherwise).
+- New provider **`openai`** (OpenAI direct, `OPENAI_API_KEY`, `OPENAI_TIER{1,2,3}_MODELS`),
+  always via `/responses`. The only route for gpt-6-astra with tools.
+  **Default chain unchanged** (`together,openrouter`).
+- `lightning`: `openai/gpt-5*`, `gpt-6*`, `o*` models **with tools** now go to
+  `/responses` automatically; without tools they stay on chat.
+  `LIGHTNING_RESPONSES=never` disables this.
+- "does not support the Responses API" (gpt-6-astra on Lightning) raises
+  `DUAL_RAIL_TOOLS_UNSUPPORTED` without retry, so the next model/provider takes over.
+- Results carry `api: 'chat' | 'responses'` through the router.
+- Tests 81 → 117 (offline). Live-key round trips through `chatComplete` passed for
+  OpenAI direct (luna, gpt-6), Lightning (sol; gpt-6 → terra fallback), chain
+  `lightning,openai` (gpt-6 fails on Lightning, OpenAI direct takes over), JSON mode,
+  and plain Lightning chat.
+
 ## 0.3.1 — 2026-09-17
 
 **Fix:** DeepInfra puts reasoning in `message.reasoning_content`, not `message.reasoning`.

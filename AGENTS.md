@@ -28,3 +28,8 @@
   Tests must never hit a live API or need a real key.
 - Tool calling is passthrough only. The enterprise rail throws
   `DUAL_RAIL_TOOLS_UNSUPPORTED`; it must never fall back to FinOps.
+- OpenAI reasoning models need `/responses` to use tools. The format conversion
+  lives only in `src/adapters/responses.mjs`; callers keep chat-shaped inputs and
+  outputs. Opt in per adapter with `useResponses(model, { tools })` — `openai`
+  always, `lightning` only for `openai/gpt-5*|gpt-6*|o*` with tools. Keep
+  `store: false`.

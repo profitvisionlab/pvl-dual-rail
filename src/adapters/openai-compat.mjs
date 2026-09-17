@@ -14,6 +14,7 @@
 //   · 長駐程序改 env 後不用重啟就生效（金鑰輪替時有用）
 
 import { envInt, envList, assertAsciiKey, finishFlags } from '../env.mjs'
+import { buildResponsesBody, parseResponsesResult, responsesUrl } from './responses.mjs'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -100,7 +101,7 @@ const WRAPPED_CLIENT_ERROR = /status code:\s*4\d\d|\bBad Request\b|INVALID_ARGUM
  * · GPT-5.5：閘道強制帶 reasoning_effort，OpenAI 拒絕 reasoning＋function tools
  * 命中時丟 DUAL_RAIL_TOOLS_UNSUPPORTED，讓呼叫端知道是「組合不支援」而不是「暫時故障」。
  */
-const TOOLS_UNSUPPORTED = /thought_signature|Function tools with reasoning_effort|tools? (?:are |is )?not supported|does not support (?:tools|function)/i
+const TOOLS_UNSUPPORTED = /thought_signature|Function tools with reasoning_effort|tools? (?:are |is )?not supported|does not support (?:tools|function)|does not support the Responses API/i
 
 function httpError({ label, status, model, body, tools }) {
   const snippet = String(body || '').replace(/\s+/g, ' ').slice(0, 240)
@@ -121,13 +122,17 @@ function httpError({ label, status, model, body, tools }) {
  * @param {string} [spec.docHint]    - 模型清單未設定時，錯誤訊息指向哪份說明
  * @param {(model: string) => string} [spec.maxTokensField]
  *   - 上限欄位名。預設 max_tokens；OpenAI 推理世代（gpt-5／gpt-6／o 系列）只收 max_completion_tokens
+ * @param {(model: string, ctx: { tools?: object[] }) => boolean} [spec.useResponses]
+ *   - 這次呼叫改走 /responses（0.4.0）。預設一律走 /chat/completions。
+ *     格式轉換在 responses.mjs，呼叫端的輸入輸出形狀不變。
  */
-export function createOpenAICompatAdapter({ id, label, envPrefix, defaultBaseUrl, docHint, maxTokensField = () => 'max_tokens' }) {
+export function createOpenAICompatAdapter({ id, label, envPrefix, defaultBaseUrl, docHint, maxTokensField = () => 'max_tokens', useResponses = () => false }) {
   const keyEnv = `${envPrefix}_API_KEY`
   const tierEnv = (tier) => `${envPrefix}_TIER${tier}_MODELS`
 
   const config = () => ({
     url: chatCompletionsUrl(process.env[`${envPrefix}_BASE_URL`] || defaultBaseUrl),
+    respUrl: responsesUrl(process.env[`${envPrefix}_BASE_URL`] || defaultBaseUrl),
     maxAttempts: Math.max(1, envInt(`${envPrefix}_MAX_ATTEMPTS`, 3)),
     backoffBaseMs: envInt(`${envPrefix}_BACKOFF_BASE_MS`, 100),
     timeoutMs: envInt(`${envPrefix}_TIMEOUT_MS`, 45_000),
@@ -156,7 +161,7 @@ export function createOpenAICompatAdapter({ id, label, envPrefix, defaultBaseUrl
    */
   async function call({ models, system, messages, maxTokens, json, tools, toolChoice }) {
     const key = assertAsciiKey(keyEnv, process.env[keyEnv])
-    const { url, maxAttempts, backoffBaseMs, timeoutMs } = config()
+    const { url, respUrl, maxAttempts, backoffBaseMs, timeoutMs } = config()
     const sys = flattenSystem(system)
 
     const payload = (model) => ({
@@ -170,14 +175,18 @@ export function createOpenAICompatAdapter({ id, label, envPrefix, defaultBaseUrl
     let lastErr = null
 
     for (const model of models) {
+      const viaResponses = Boolean(useResponses(model, { tools }))
+      const body = JSON.stringify(
+        viaResponses ? buildResponsesBody({ model, system: sys, messages, maxTokens, json, tools, toolChoice }) : payload(model),
+      )
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         const ctl = new AbortController()
         const timer = setTimeout(() => ctl.abort(), timeoutMs)
         try {
-          const res = await fetch(url, {
+          const res = await fetch(viaResponses ? respUrl : url, {
             method: 'POST',
             headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload(model)),
+            body,
             signal: ctl.signal,
           })
 
@@ -207,32 +216,46 @@ export function createOpenAICompatAdapter({ id, label, envPrefix, defaultBaseUrl
           }
 
           const jsonBody = await res.json()
-          const choice = jsonBody?.choices?.[0]
-          const message = choice?.message ?? null
-          const text = typeof message?.content === 'string' ? message.content : ''
-          const toolCalls = normalizeToolCalls(message)
-          const usage = jsonBody?.usage ?? null
+          let parsed
+          if (viaResponses) {
+            parsed = parseResponsesResult(jsonBody)
+          } else {
+            const choice = jsonBody?.choices?.[0]
+            const message = choice?.message ?? null
+            parsed = {
+              text: typeof message?.content === 'string' ? message.content : '',
+              toolCalls: normalizeToolCalls(message),
+              message,
+              usage: jsonBody?.usage ?? null,
+              finishReason: choice?.finish_reason,
+              hasReasoning: Boolean(reasoningOf(message)),
+              reasoning: reasoningOf(message),
+              model: jsonBody?.model ?? null,
+            }
+          }
+          const { text, toolCalls, message, usage } = parsed
 
           if (text.length || toolCalls.length) {
             // 有內容但撞 length＝被截斷：不丟錯，回傳並打 truncated 旗標，由 router／呼叫端決定。
             // 只有 tool_calls、沒有文字也算有效回覆（finish_reason=tool_calls 不算截斷）。
             return {
               text,
-              model: jsonBody?.model || model,
+              model: parsed.model || model,
               provider: id,
+              api: viaResponses ? 'responses' : 'chat',
               usage,
               cachedTokens: cachedTokensOf(usage),
               toolCalls,
               message,
-              ...finishFlags(choice?.finish_reason, { hasContent: true, hasReasoning: Boolean(reasoningOf(message)) }),
-              ...(reasoningOf(message) ? { reasoning: reasoningOf(message) } : {}),
+              ...finishFlags(parsed.finishReason, { hasContent: true, hasReasoning: parsed.hasReasoning }),
+              ...(parsed.reasoning ? { reasoning: parsed.reasoning } : {}),
             }
           }
 
-          // ⚠️ 推理模型把思考放在 message.reasoning，content 要等推理結束才填。
-          // maxTokens 太小時回來就是 content:"" + finish_reason:"length" ——
+          // ⚠️ 推理模型把思考放在 message.reasoning（或 reasoning_content、Responses 的 reasoning item），
+          // content 要等推理結束才填。maxTokens 太小時回來就是空內容＋length ——
           // 看起來像模型壞了，其實只是沒錢寫答案。明確辨識，否則整層會靜默失效。
-          if (choice?.finish_reason === 'length' && reasoningOf(message)) {
+          if (parsed.finishReason === 'length' && parsed.hasReasoning) {
             lastErr = new Error(
               `${label}: ${model} 的推理耗盡 max_tokens(${maxTokens})，尚未產出答案。` +
                 `推理模型請給更大的 maxTokens（建議 ≥1000），或改用非推理模型。`,
