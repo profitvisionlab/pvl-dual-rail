@@ -9,6 +9,19 @@
 
 <!-- ==== 以下為手寫區：sync-agents.js 不會覆蓋 ==== -->
 
+## 細部規範
+
+依任務讀取相關細則；細則補充本文件，衝突時以本文件為準。
+
+| 規範 | 用途 |
+| --- | --- |
+| [tech-stack.md](.agent-rules/tech-stack.md) | 技術堆疊與版本正本 |
+| [project-structure.md](.agent-rules/project-structure.md) | 目錄結構與文件歸屬 |
+| [tracking.md](.agent-rules/tracking.md) | 工作追蹤與交接 |
+| [verification.md](.agent-rules/verification.md) | 驗證與回報 |
+
+`docs/` 各分類的用途見 [project-structure.md](.agent-rules/project-structure.md)。
+
 ## Ground rules (pvl-dual-rail)
 
 - **Zero runtime dependencies.** A PR that adds one needs a compelling reason.
