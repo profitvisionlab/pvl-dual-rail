@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-10-20** — folded into `pvl-relay-skill/src/llm/`. See [ARCHIVED.md](ARCHIVED.md). This public copy is frozen at 0.2.0.
+
 # Dual-rail LLM routing — PVL.AI semi-open
 
 Same Tri-Tier scheduling brain, **two rails**, with a hard policy gate in code (not just docs).

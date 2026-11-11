@@ -5,6 +5,12 @@
   "type": "module",
   "license": "MIT",
   "private": false,
+  "files": [
+    "src/",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
   "exports": {
     ".": "./src/index.mjs",
     "./policy": "./src/policy.mjs",
